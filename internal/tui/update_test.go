@@ -281,3 +281,58 @@ func TestDetailKeyNavigation(t *testing.T) {
 		}
 	})
 }
+
+func TestWithTargetsSeedsInitialState(t *testing.T) {
+	t.Run("pid target selects that process on first list", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPID, Value: "2"}})
+		if m.initialPID != 2 {
+			t.Fatalf("initialPID = %d, want 2", m.initialPID)
+		}
+		m, cmd := step(t, m, []model.Process{{PID: 1, Command: "a"}, {PID: 2, Command: "b"}, {PID: 3, Command: "c"}})
+		if got := m.table.Cursor(); got != 1 {
+			t.Errorf("cursor = %d, want 1 (row of pid 2)", got)
+		}
+		if cmd == nil {
+			t.Error("selecting the pid should fetch its tree")
+		}
+		if m.initialPID != 0 {
+			t.Errorf("initialPID should be cleared after first list, got %d", m.initialPID)
+		}
+	})
+
+	t.Run("name target pre-fills the process filter", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetName, Value: "nginx"}})
+		m, _ = step(t, m, []model.Process{{PID: 1, Command: "nginx"}, {PID: 2, Command: "redis"}})
+		if len(m.filtered) != 1 || m.filtered[0].Command != "nginx" {
+			t.Errorf("name target should narrow to [nginx], got %v", m.filtered)
+		}
+	})
+
+	t.Run("port target opens the ports tab with the filter set", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPort, Value: "5432"}})
+		if m.activeTab != tabPorts {
+			t.Errorf("activeTab = %v, want tabPorts", m.activeTab)
+		}
+		if m.portInput.Value() != "5432" {
+			t.Errorf("port filter = %q, want \"5432\"", m.portInput.Value())
+		}
+		m, _ = step(t, m, []model.OpenPort{{Port: 5432, Protocol: "tcp", State: "LISTEN"}, {Port: 80, Protocol: "tcp", State: "LISTEN"}})
+		if rows := m.portTable.Rows(); len(rows) != 1 {
+			t.Errorf("port list should be narrowed to 1 row, got %d", len(rows))
+		}
+	})
+
+	t.Run("container target opens the containers tab with the filter set", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetContainer, Value: "web"}})
+		if m.activeTab != tabContainers || m.containerInput.Value() != "web" {
+			t.Errorf("activeTab = %v, filter = %q", m.activeTab, m.containerInput.Value())
+		}
+	})
+
+	t.Run("no targets leaves defaults", func(t *testing.T) {
+		m := InitialModel("test").withTargets(nil)
+		if m.activeTab != tabProcesses || m.initialPID != 0 || m.input.Value() != "" {
+			t.Errorf("unexpected seeded state: tab=%v pid=%d filter=%q", m.activeTab, m.initialPID, m.input.Value())
+		}
+	})
+}

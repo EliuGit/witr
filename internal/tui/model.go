@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -206,6 +207,9 @@ type MainModel struct {
 	actionMenuOpen bool
 	pendingAction  actionKind
 	reniceInput    textinput.Model
+
+	// PID to select once the first process list arrives
+	initialPID int
 }
 
 func InitialModel(version string) MainModel {
@@ -363,23 +367,65 @@ func InitialModel(version string) MainModel {
 	}
 }
 
-func Start(version string) error {
+func Start(version string, targets []model.Target) error {
 	if os.Getenv("COLORTERM") == "" {
 		os.Setenv("COLORTERM", "truecolor") //nolint:errcheck
 	}
 
-	p := tea.NewProgram(InitialModel(version), tea.WithAltScreen())
+	p := tea.NewProgram(InitialModel(version).withTargets(targets), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("error running tui: %w", err)
 	}
 	return nil
 }
 
+// withTargets seeds the initial tab, filter and selection from the CLI
+// targets so `witr -i` opens where a non-interactive run would have looked.
+func (m MainModel) withTargets(targets []model.Target) MainModel {
+	for _, t := range targets {
+		switch t.Type {
+		case model.TargetPID:
+			if pid, err := strconv.Atoi(t.Value); err == nil && m.initialPID == 0 {
+				m.initialPID = pid
+			}
+		case model.TargetName:
+			if m.input.Value() == "" {
+				m.input.SetValue(t.Value)
+			}
+		case model.TargetPort:
+			if m.portInput.Value() == "" {
+				m.portInput.SetValue(t.Value)
+				m.activeTab = tabPorts
+			}
+		case model.TargetContainer:
+			if m.containerInput.Value() == "" {
+				m.containerInput.SetValue(t.Value)
+				m.activeTab = tabContainers
+			}
+		case model.TargetFile:
+			if locksTabEnabled && m.lockInput.Value() == "" {
+				m.lockInput.SetValue(t.Value)
+				m.activeTab = tabLocks
+			}
+		}
+	}
+	return m
+}
+
 func (m MainModel) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		textinput.Blink,
 		m.refreshProcesses(),
 		waitTick(),
 		tea.EnableMouseCellMotion,
-	)
+	}
+	switch m.activeTab {
+	case tabPorts:
+		cmds = append(cmds, m.refreshPorts())
+	case tabContainers:
+		cmds = append(cmds, m.refreshContainers())
+	case tabLocks:
+		cmds = append(cmds, m.refreshLocks())
+	}
+	return tea.Batch(cmds...)
 }
