@@ -274,7 +274,7 @@ func (m *MainModel) filterProcesses() {
 
 		if match {
 			m.filtered = append(m.filtered, p)
-			startedStr := p.StartedAt.Format("Jan 02 15:04:05")
+			startedStr := p.StartedAt.Local().Format("Jan 02 15:04:05")
 			if p.StartedAt.IsZero() {
 				startedStr = ""
 			}
@@ -650,11 +650,19 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 	}
 
 	idx := 0
-	for i, proc := range ancestry {
-		indent := strings.Repeat("  ", i)
-		if i > 0 {
-			fmt.Fprintf(&b, "%s%s ", indent, magenta.Render("└─"))
+	depth := 0
+	branch := func() {
+		if depth > 0 {
+			fmt.Fprintf(&b, "%s%s ", strings.Repeat("  ", depth), magenta.Render("└─"))
 		}
+		depth++
+	}
+	for i, proc := range ancestry {
+		if gap := output.ParentGap(ancestry, i); gap != "" {
+			branch()
+			fmt.Fprintf(&b, "%s\n", dim.Render(gap))
+		}
+		branch()
 
 		label := fmt.Sprintf("%s (pid %d)", output.SanitizeTerminalLine(output.ChainName(proc)), proc.PID)
 		if idx == m.treeCursor {
@@ -670,7 +678,7 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 	limit := 10
 	count := len(children)
 	if count > 0 {
-		baseIndent := strings.Repeat("  ", len(ancestry))
+		baseIndent := strings.Repeat("  ", depth)
 		for i, child := range children {
 			if i >= limit {
 				remaining := count - limit

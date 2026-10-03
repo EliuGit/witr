@@ -202,6 +202,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		out.Printf("\n%sWhy It Exists%s :\n  ", ColorMagenta, ColorReset)
 		for i, p := range r.Ancestry {
 			name := SanitizeTerminal(ChainName(p))
+			if gap := ParentGap(r.Ancestry, i); gap != "" {
+				out.Printf("%s%s%s %s→%s ", ColorDimYellow, gap, ColorReset, ColorMagenta, ColorReset)
+			}
 
 			nameColor := ansiString("")
 			if i == len(r.Ancestry)-1 {
@@ -217,6 +220,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		out.Printf("\nWhy It Exists :\n  ")
 		for i, p := range r.Ancestry {
 			name := SanitizeTerminal(ChainName(p))
+			if gap := ParentGap(r.Ancestry, i); gap != "" {
+				out.Printf("%s → ", gap)
+			}
 			out.Printf("%s (pid %d)", name, p.PID)
 			if i < len(r.Ancestry)-1 {
 				out.Printf(" \u2192 ")

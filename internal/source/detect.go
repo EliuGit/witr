@@ -51,7 +51,62 @@ var (
 	}
 )
 
+// orphanedDescription explains an unknown source whose chain was cut where
+// the process that started the target exited.
+const orphanedDescription = "The process that started it has exited; what remains above it only adopted it"
+
 func Detect(ancestry []model.Process) model.Source {
+	src := detect(ancestry)
+	if cut := parentExitedAt(ancestry); cut >= 0 && !explainsOrphan(src, ancestry[cut:]) {
+		return model.Source{Type: model.SourceUnknown, Description: orphanedDescription}
+	}
+	return src
+}
+
+// parentExitedAt returns the index of the last process in the chain whose
+// parent has exited, or -1 when the chain is intact.
+func parentExitedAt(ancestry []model.Process) int {
+	for i := len(ancestry) - 1; i >= 0; i-- {
+		if ancestry[i].ParentExited {
+			return i
+		}
+	}
+	return -1
+}
+
+// explainsOrphan reports whether src still names a real cause once the chain
+// is cut at an exited parent, since everything above the cut merely adopted
+// the process. Sources read from the process itself (its container, systemd
+// service, launchd job or rc service) still hold; sources found from its
+// ancestors only hold when found below the cut, the part of the chain that
+// actually started it.
+func explainsOrphan(src model.Source, below []model.Process) bool {
+	switch src.Type {
+	case model.SourceContainer:
+		return true
+	case model.SourceSystemd:
+		// A .scope (login session, app launch, init.scope) or the user
+		// manager only says where the process ended up, not what started it.
+		return strings.HasSuffix(src.Name, ".service") && !strings.HasPrefix(src.Name, "user@")
+	case model.SourceLaunchd:
+		return src.Name != "launchd"
+	case model.SourceBsdRc:
+		return src.Details["service"] != "" || src.UnitFile != ""
+	case model.SourceShell:
+		return detectShell(below) != nil
+	case model.SourceSSH:
+		return detectSSH(below) != nil
+	case model.SourceSupervisor:
+		return detectSupervisor(below) != nil
+	case model.SourceCron:
+		return detectCron(below) != nil
+	case model.SourceWindowsService:
+		return detectWindowsService(below) != nil
+	}
+	return false
+}
+
+func detect(ancestry []model.Process) model.Source {
 	// Detection order prioritizes platform-specific init systems
 	// over generic supervisor detection to avoid false positives
 	if src := detectContainer(ancestry); src != nil {
@@ -201,7 +256,11 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 	// so an unknown source is normal there — not a reliable "unsupervised"
 	// signal — and this warning would fire on most user processes.
 	if st == model.SourceUnknown && runtime.GOOS != "windows" {
-		w = append(w, "No known supervisor or service manager detected")
+		if parentExitedAt(p) >= 0 {
+			w = append(w, "Original parent process has exited, so what started this process can't be traced")
+		} else {
+			w = append(w, "No known supervisor or service manager detected")
+		}
 	}
 
 	// Warn if process is very old (>90 days). A zero start time means we

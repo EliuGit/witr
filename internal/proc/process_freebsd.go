@@ -156,6 +156,7 @@ func ReadProcess(pid int) (model.Process, error) {
 		Sockets:       procSockets,
 		Health:        health,
 		Forked:        forked,
+		Session:       sessionID(pid),
 		Env:           env,
 		ExeDeleted:    exeDeleted,
 	}, nil

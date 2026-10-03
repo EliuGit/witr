@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,6 +45,27 @@ func TestTreeMessagePopulatesViewport(t *testing.T) {
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if m.treeCursor == before {
 		t.Errorf("up in the side pane should move the tree cursor from %d", before)
+	}
+}
+
+func TestTreeShowsExitedParent(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.processes = []model.Process{{PID: 42, Command: "x"}}
+	m.filterProcesses()
+	m.table.SetCursor(0)
+
+	res := model.Result{
+		Process:  model.Process{PID: 42, Command: "x", ParentExited: true},
+		Ancestry: []model.Process{{PID: 1, Command: "systemd"}, {PID: 42, PPID: 1, Command: "x", ParentExited: true}},
+	}
+	m, _ = step(t, m, treeMsg(res))
+
+	if !strings.Contains(m.treeViewport.View(), "? (original parent exited)") {
+		t.Errorf("tree should mark the exited parent:\n%s", m.treeViewport.View())
+	}
+	// The marker is not a process, so the tree cursor still walks real PIDs.
+	if want := []int{1, 42}; !equalInts(m.treePIDs, want) {
+		t.Errorf("treePIDs = %v, want %v", m.treePIDs, want)
 	}
 }
 

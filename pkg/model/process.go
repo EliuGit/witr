@@ -35,6 +35,15 @@ type Process struct {
 
 	// Forked status ("forked", "not-forked", "unknown")
 	Forked string
+
+	// Session is the process's session ID, or 0 when unknown.
+	Session int `json:"-"`
+
+	// ParentExited is set when the process that started this one has exited.
+	// Either it was adopted by the process above it in the chain, or, at the
+	// top of a chain, its parent PID now names nothing or a newer process.
+	ParentExited bool `json:",omitempty"`
+
 	// Environment variables (key=value)
 	Env []string
 

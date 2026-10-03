@@ -786,6 +786,8 @@ Executable, PID, user, command, start time and restart count.
 A causal ancestry chain showing how the process came to exist.
 This is the core value of witr.
 
+When the process that started it has exited, the chain marks the break with `? (original parent exited)` (or `? (parent pid N exited)` when the parent's PID now belongs to an unrelated process) instead of crediting whatever adopted it.
+
 #### Source
 
 The primary system responsible for starting or supervising the process (best effort).
@@ -801,7 +803,7 @@ Examples:
 - interactive shell (detects tmux/screen sessions)
 - Snap/Flatpak sandbox (Linux)
 
-Only **one primary source** is selected.
+Only **one primary source** is selected. If the original parent has exited and nothing about the process itself (its container, service unit or launchd job) explains it, the source is reported as `unknown` rather than guessed.
 
 #### Context (best effort)
 
@@ -821,6 +823,7 @@ Non‑blocking observations such as:
 - Process is using high memory (>1GB RSS)
 - Process has been running for over 90 days
 - Deleted binary, library injection indicators (LD_PRELOAD, DYLD_*)
+- Original parent process has exited, so what started the process can't be traced
 
 ---
 

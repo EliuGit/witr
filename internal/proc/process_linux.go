@@ -169,6 +169,7 @@ func ReadProcess(pid int) (model.Process, error) {
 	}
 
 	ppid, _ := strconv.Atoi(fields[1])
+	session, _ := strconv.Atoi(fields[3])
 	state := processState(fields)
 	startTicks, _ := strconv.ParseInt(fields[19], 10, 64)
 
@@ -292,6 +293,7 @@ func ReadProcess(pid int) (model.Process, error) {
 		Sockets:          procSockets,
 		Health:           health,
 		Forked:           forked,
+		Session:          session,
 		Env:              env,
 		ExeDeleted:       isBinaryDeleted(pid),
 		Capabilities:     ReadCapabilities(pid),

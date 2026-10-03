@@ -190,6 +190,53 @@ func TestWarningsSuspiciousWorkingDirs(t *testing.T) {
 	}
 }
 
+func TestWarningsOrphaned(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unknown sources are not warned about on Windows")
+	}
+
+	parent := baseProc()
+	parent.PID = 1
+	p := baseProc()
+	p.ParentExited = true
+	got := Warnings([]model.Process{parent, p}, 0, model.SourceUnknown)
+	if !contains(got, "Original parent process has exited") || contains(got, "No known supervisor") {
+		t.Errorf("an orphan with no traceable source should get the orphan warning only, got: %v", got)
+	}
+}
+
+func TestExplainsOrphan(t *testing.T) {
+	t.Parallel()
+
+	shellBelow := []model.Process{{PID: 250, Command: "bash"}, {PID: 300, Command: "sleep"}}
+	targetOnly := []model.Process{{PID: 300, Command: "sleep"}}
+	tests := []struct {
+		name  string
+		src   model.Source
+		below []model.Process
+		want  bool
+	}{
+		{"container", model.Source{Type: model.SourceContainer, Name: "docker"}, targetOnly, true},
+		{"systemd service", model.Source{Type: model.SourceSystemd, Name: "cron.service"}, targetOnly, true},
+		{"login session scope", model.Source{Type: model.SourceSystemd, Name: "session-2.scope"}, targetOnly, false},
+		{"init.scope", model.Source{Type: model.SourceSystemd, Name: "init.scope"}, targetOnly, false},
+		{"user manager", model.Source{Type: model.SourceSystemd, Name: "user@1000.service"}, targetOnly, false},
+		{"launchd job", model.Source{Type: model.SourceLaunchd, Name: "com.example.agent"}, targetOnly, true},
+		{"bare launchd", model.Source{Type: model.SourceLaunchd, Name: "launchd"}, targetOnly, false},
+		{"rc service from pidfile", model.Source{Type: model.SourceBsdRc, Name: "nginx", Details: map[string]string{"service": "nginx"}}, targetOnly, true},
+		{"rc guess from parent", model.Source{Type: model.SourceBsdRc, Name: "sleep"}, targetOnly, false},
+		{"shell that started it", model.Source{Type: model.SourceShell, Name: "bash"}, shellBelow, true},
+		{"shell above the cut", model.Source{Type: model.SourceShell, Name: "bash"}, targetOnly, false},
+		{"init", model.Source{Type: model.SourceInit, Name: "systemd"}, targetOnly, false},
+	}
+	for _, tt := range tests {
+		if got := explainsOrphan(tt.src, tt.below); got != tt.want {
+			t.Errorf("%s: explainsOrphan = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestWarningsContainerWorkingDirNotSuspicious(t *testing.T) {
 	t.Parallel()
 

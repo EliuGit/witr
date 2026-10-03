@@ -34,6 +34,41 @@ func TestRenderShort(t *testing.T) {
 	}
 }
 
+func TestRenderChainShowsExitedParent(t *testing.T) {
+	t.Parallel()
+
+	adopted := model.Result{Ancestry: []model.Process{
+		{PID: 1, Command: "systemd"},
+		{PID: 300, PPID: 1, Command: "sleep", ParentExited: true},
+	}}
+	truncated := model.Result{Ancestry: []model.Process{
+		{PID: 300, PPID: 100, Command: "worker", ParentExited: true},
+	}}
+
+	tests := []struct {
+		name   string
+		render func(*bytes.Buffer, model.Result)
+		r      model.Result
+		want   string
+	}{
+		{"short, adopted", func(b *bytes.Buffer, r model.Result) { RenderShort(b, r, false) }, adopted,
+			"systemd (pid 1) → ? (original parent exited) → sleep (pid 300)"},
+		{"short, truncated", func(b *bytes.Buffer, r model.Result) { RenderShort(b, r, false) }, truncated,
+			"? (parent pid 100 exited) → worker (pid 300)"},
+		{"standard, adopted", func(b *bytes.Buffer, r model.Result) { RenderStandard(b, r, false, false) }, adopted,
+			"systemd (pid 1) → ? (original parent exited) → sleep (pid 300)"},
+		{"tree, adopted", func(b *bytes.Buffer, r model.Result) { PrintTree(b, r.Ancestry, nil, false) }, adopted,
+			"systemd (pid 1)\n  └─ ? (original parent exited)\n    └─ sleep (pid 300)"},
+	}
+	for _, tt := range tests {
+		var buf bytes.Buffer
+		tt.render(&buf, tt.r)
+		if !strings.Contains(buf.String(), tt.want) {
+			t.Errorf("%s: output missing %q\ngot:\n%s", tt.name, tt.want, buf.String())
+		}
+	}
+}
+
 func TestRenderShortSingleProcess(t *testing.T) {
 	t.Parallel()
 
