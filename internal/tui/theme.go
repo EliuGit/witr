@@ -16,27 +16,33 @@ import (
 var (
 	colorProfile = colorprofile.Env(os.Environ())
 	basicColors  = colorProfile < colorprofile.ANSI256
+	// NO_COLOR is set: no colors at all, but bold, faint and reverse video
+	// still render, so the selection stays visible.
+	noColor = colorProfile == colorprofile.ASCII
 )
 
-// pick returns full, or basic on terminals below 256 colors.
+// pick returns full, basic on terminals below 256 colors, or no color at all
+// under NO_COLOR.
 func pick(full, basic lipgloss.TerminalColor) lipgloss.TerminalColor {
-	if basicColors {
+	switch {
+	case noColor:
+		return lipgloss.NoColor{}
+	case basicColors:
 		return basic
 	}
 	return full
 }
 
 // lipglossProfile maps the detected profile onto lipgloss. Anything below 256
-// colors renders as ANSI, which the basic palette fits in; ASCII stays ASCII
-// so NO_COLOR is honored.
+// colors renders as ANSI, which the basic palette fits in. That includes
+// NO_COLOR, where the palette is colorless: lipgloss's ASCII profile would also
+// drop the reverse video that marks the selection.
 func lipglossProfile(p colorprofile.Profile) termenv.Profile {
 	switch p {
 	case colorprofile.TrueColor:
 		return termenv.TrueColor
 	case colorprofile.ANSI256:
 		return termenv.ANSI256
-	case colorprofile.ASCII:
-		return termenv.Ascii
 	}
 	return termenv.ANSI
 }
@@ -53,7 +59,8 @@ func lipglossProfile(p colorprofile.Profile) termenv.Profile {
 // the same on any terminal, so they stay fixed.
 //
 // The basic fallbacks use the standard colors 0-7 only, never the bright
-// 8-15, and leave dim colors at the terminal default.
+// 8-15, and leave dim colors at the terminal default; muted text is drawn
+// faint instead.
 var (
 	// Accent — table/pane headers, prompts, active borders.
 	colorAccent = pick(lipgloss.AdaptiveColor{Light: "#4338ca", Dark: "#5f5fd7"}, lipgloss.Color("4"))

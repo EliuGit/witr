@@ -7,13 +7,12 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// Below 256 colors the TUI must render as ANSI so the basic palette and the
-// reverse-video selection still show (#232); only NO_COLOR (ASCII) drops
-// styling entirely.
+// Below 256 colors, and under NO_COLOR (ASCII) with its colorless palette, the
+// TUI must render as ANSI so the reverse-video selection still shows (#232).
 func TestLipglossProfileFollowsDetectedProfile(t *testing.T) {
 	want := map[colorprofile.Profile]termenv.Profile{
 		colorprofile.NoTTY:     termenv.ANSI,
-		colorprofile.ASCII:     termenv.Ascii,
+		colorprofile.ASCII:     termenv.ANSI,
 		colorprofile.ANSI:      termenv.ANSI,
 		colorprofile.ANSI256:   termenv.ANSI256,
 		colorprofile.TrueColor: termenv.TrueColor,

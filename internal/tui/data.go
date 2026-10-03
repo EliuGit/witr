@@ -513,14 +513,14 @@ func (m *MainModel) updateDetailViewport() {
 				m.viewport.Width = 1
 			}
 		}
-		output.RenderStandard(&b, *m.selectedDetail, true, true)
+		output.RenderStandard(&b, *m.selectedDetail, !noColor, true)
 	case m.selectedContainer != nil:
 		// Container detail occupies the full width — no env pane to share with.
 		if w := m.width - 6; w > 0 {
 			m.viewport.Width = w
 		}
 		label := "container " + m.selectedContainer.Name
-		output.RenderContainerFallback(&b, label, m.selectedContainer, true, true)
+		output.RenderContainerFallback(&b, label, m.selectedContainer, !noColor, true)
 	default:
 		return
 	}
@@ -544,7 +544,7 @@ func (m *MainModel) updateEnvViewport() {
 			fmt.Fprintf(&b, "%s\n", output.SanitizeTerminalLine(env))
 		}
 	} else {
-		dimStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		dimStyle := lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
 		fmt.Fprintf(&b, "%s\n", dimStyle.Render("No environment variables found."))
 	}
 
@@ -640,7 +640,7 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 		Background(colorSelectBg).
 		Foreground(colorSelectFg).
 		Reverse(basicColors)
-	dim := lipgloss.NewStyle().Foreground(colorMuted)
+	dim := lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
 	sectionLabel := lipgloss.NewStyle().Foreground(colorSectionLabel).Bold(true)
 
 	fmt.Fprintf(&b, "%s\n", sectionLabel.Render("Ancestry Tree:"))

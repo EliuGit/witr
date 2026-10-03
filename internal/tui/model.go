@@ -35,10 +35,11 @@ var (
 			Foreground(colorAccent).
 			Bold(true)
 
-	placeholderStyle = lipgloss.NewStyle().Foreground(colorMuted)
+	placeholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
+			Faint(basicColors).
 			Border(lipgloss.NormalBorder(), true, false, false, false).
 			BorderForeground(colorBorderDim).
 			Padding(0, 1).
