@@ -391,12 +391,39 @@ func printDivider(outp output.Printer, t model.Target, colorEnabled bool, needsN
 
 // jsonErrorEntry returns a JSON string representing a failed target lookup.
 func jsonErrorEntry(t model.Target, errMsg string) string {
+	return jsonMatchEntry(t, errMsg, nil)
+}
+
+// jsonMatchEntry is a failed lookup of an ambiguous target: matches lists the
+// candidates, so a script can re-run against the one it wants.
+func jsonMatchEntry(t model.Target, errMsg string, matches any) string {
 	type errorEntry struct {
-		Target model.Target
-		Error  string
+		Target  model.Target
+		Error   string
+		Matches any `json:",omitempty"`
 	}
-	data, _ := json.MarshalIndent(errorEntry{Error: errMsg, Target: t}, "", "  ")
+	data, _ := json.MarshalIndent(errorEntry{Error: errMsg, Target: t, Matches: matches}, "", "  ")
 	return string(data)
+}
+
+// emitJSON adds an entry to the multi-target JSON array, or prints it as the
+// whole output for a single target.
+func emitJSON(outw io.Writer, entry string, multiMode bool, jsonResults *[]string) {
+	if multiMode {
+		*jsonResults = append(*jsonResults, entry)
+		return
+	}
+	fmt.Fprintln(outw, entry)
+}
+
+// jsonError reports a failed target under --json without breaking stdout: an
+// entry in the multi-target array, or text on stderr for a single target.
+func jsonError(cmd *cobra.Command, t model.Target, msg string, multiMode bool, jsonResults *[]string) {
+	if multiMode {
+		*jsonResults = append(*jsonResults, jsonErrorEntry(t, msg))
+		return
+	}
+	cmd.PrintErrln(msg)
 }
 
 // processTarget handles resolving and rendering a single target.
@@ -405,7 +432,7 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 	colorEnabled := useColor(flags, outw)
 
 	if flags.env {
-		return processEnvTarget(outw, outp, t, flags, multiMode, jsonResults)
+		return processEnvTarget(cmd, outw, outp, t, flags, multiMode, jsonResults)
 	}
 
 	if t.Type == model.TargetContainer {
@@ -431,8 +458,8 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 	}
 
 	if len(pids) > 1 {
-		if multiMode && flags.json {
-			*jsonResults = append(*jsonResults, jsonErrorEntry(t, fmt.Sprintf("multiple processes matched (%d results)", len(pids))))
+		if flags.json {
+			emitJSON(outw, jsonMatchEntry(t, fmt.Sprintf("multiple processes matched (%d results)", len(pids)), processMatches(pids)), multiMode, jsonResults)
 		} else {
 			hint := "witr --pid <pid>"
 			if flags.env {
@@ -498,39 +525,46 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 }
 
 // processEnvTarget handles the --env flag for a single target.
-func processEnvTarget(outw io.Writer, outp output.Printer, t model.Target, flags appFlags, multiMode bool, jsonResults *[]string) int {
+func processEnvTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t model.Target, flags appFlags, multiMode bool, jsonResults *[]string) int {
 	colorEnabled := useColor(flags, outw)
 
 	pids, err := target.Resolve(t, flags.exact)
 	if err != nil {
-		if multiMode {
-			if flags.json {
-				*jsonResults = append(*jsonResults, jsonErrorEntry(t, err.Error()))
-			} else {
-				outp.Printf("Error: %v\n", err)
-			}
-			return classifyError(err)
+		switch {
+		case flags.json:
+			jsonError(cmd, t, err.Error(), multiMode, jsonResults)
+		case multiMode:
+			outp.Printf("Error: %v\n", err)
+		default:
+			outp.Printf("error: %v\n", err)
 		}
-		outp.Printf("error: %v\n", err)
 		return classifyError(err)
 	}
 	if len(pids) == 0 {
-		if multiMode && flags.json {
-			*jsonResults = append(*jsonResults, jsonErrorEntry(t, "no matching process found"))
-			return ExitNotFound
+		if flags.json {
+			jsonError(cmd, t, "no matching process found", multiMode, jsonResults)
+		} else {
+			outp.Println("No matching process found.")
 		}
-		outp.Println("No matching process found.")
 		return ExitNotFound
 	}
 	if len(pids) > 1 {
-		printMultiMatch(outp, pids, colorEnabled, "witr --pid <pid> --env")
+		if flags.json {
+			emitJSON(outw, jsonMatchEntry(t, fmt.Sprintf("multiple processes matched (%d results)", len(pids)), processMatches(pids)), multiMode, jsonResults)
+		} else {
+			printMultiMatch(outp, pids, colorEnabled, "witr --pid <pid> --env")
+		}
 		return ExitInvalidInput
 	}
 
 	pid := pids[0]
 	procInfo, err := procpkg.ReadProcess(pid)
 	if err != nil {
-		outp.Printf("error: %v\n", err)
+		if flags.json {
+			jsonError(cmd, t, err.Error(), multiMode, jsonResults)
+		} else {
+			outp.Printf("error: %v\n", err)
+		}
 		return ExitInternalError
 	}
 
@@ -679,25 +713,37 @@ func runInteractive(targets []model.Target) error {
 	return tui.Start(v, targets)
 }
 
+// processMatch is one candidate of an ambiguous process target.
+type processMatch struct {
+	PID     int
+	Command string
+	Cmdline string
+}
+
+func processMatches(pids []int) []processMatch {
+	matches := make([]processMatch, 0, len(pids))
+	for _, pid := range pids {
+		m := processMatch{PID: pid, Command: "unknown"}
+		if proc, err := procpkg.ReadProcess(pid); err == nil {
+			m.Command, m.Cmdline = proc.Command, proc.Cmdline
+		} else {
+			m.Cmdline = procpkg.GetCmdline(pid)
+		}
+		matches = append(matches, m)
+	}
+	return matches
+}
+
 func printMultiMatch(outp output.Printer, pids []int, colorEnabled bool, hint string) {
 	outp.Printf("Multiple matching processes found:\n\n")
-	for i, pid := range pids {
-		proc, err := procpkg.ReadProcess(pid)
-		var command, cmdline string
-		if err != nil {
-			command = "unknown"
-			cmdline = procpkg.GetCmdline(pid)
-		} else {
-			command = proc.Command
-			cmdline = proc.Cmdline
-		}
+	for i, m := range processMatches(pids) {
 		if colorEnabled {
 			outp.Printf("[%d] %s%s%s (%spid %d%s)\n    %s\n",
-				i+1, output.ColorGreen, command, output.ColorReset,
-				output.ColorDim, pid, output.ColorReset,
-				cmdline)
+				i+1, output.ColorGreen, m.Command, output.ColorReset,
+				output.ColorDim, m.PID, output.ColorReset,
+				m.Cmdline)
 		} else {
-			outp.Printf("[%d] %s (pid %d)\n    %s\n", i+1, command, pid, cmdline)
+			outp.Printf("[%d] %s (pid %d)\n    %s\n", i+1, m.Command, m.PID, m.Cmdline)
 		}
 	}
 	outp.Printf("\nRe-run with:\n")
@@ -767,8 +813,8 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 	}
 
 	if len(matches) > 1 {
-		if multiMode && flags.json {
-			*jsonResults = append(*jsonResults, jsonErrorEntry(t, fmt.Sprintf("multiple containers matched (%d results)", len(matches))))
+		if flags.json {
+			emitJSON(outw, jsonMatchEntry(t, fmt.Sprintf("multiple containers matched (%d results)", len(matches)), matches), multiMode, jsonResults)
 		} else {
 			printContainerMultiMatch(outp, matches, colorEnabled)
 		}
@@ -786,7 +832,11 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 			Target:  t,
 		})
 		if err != nil {
-			outp.Printf("Error: %v\n", err)
+			if flags.json {
+				jsonError(cmd, t, err.Error(), multiMode, jsonResults)
+			} else {
+				outp.Printf("Error: %v\n", err)
+			}
 			return classifyError(err)
 		}
 		res.Process.Container = output.FormatContainerLine(match)
