@@ -27,8 +27,14 @@ var (
 )
 
 func init() {
-	ColorRed, ColorGreen, ColorBlue, ColorCyan, ColorMagenta, ColorDim, ColorDimYellow =
-		palette(colorprofile.Env(os.Environ()))
+	SetColorProfile(colorprofile.Env(os.Environ()))
+}
+
+// SetColorProfile selects the palette for p. It is detected from the
+// environment at startup; renderers that target a known terminal, like the
+// playground fixtures, pin it instead.
+func SetColorProfile(p colorprofile.Profile) {
+	ColorRed, ColorGreen, ColorBlue, ColorCyan, ColorMagenta, ColorDim, ColorDimYellow = palette(p)
 }
 
 // palette returns the foreground codes to use for a terminal with the given

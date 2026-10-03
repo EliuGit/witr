@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/pranshuparmar/witr/internal/output"
 	"github.com/pranshuparmar/witr/pkg/model"
 )
@@ -76,6 +77,9 @@ type fixture struct {
 }
 
 func main() {
+	// The playground (docs/js/ansi.js) renders a 256-color terminal.
+	output.SetColorProfile(colorprofile.ANSI256)
+
 	root := repoRoot()
 	var w world
 	readJSON(filepath.Join(root, "docs/worlds/webbox.json"), &w)

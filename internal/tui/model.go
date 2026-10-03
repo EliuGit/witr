@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"time"
 
@@ -35,6 +34,8 @@ var (
 	promptStyle = lipgloss.NewStyle().
 			Foreground(colorAccent).
 			Bold(true)
+
+	placeholderStyle = lipgloss.NewStyle().Foreground(colorMuted)
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
@@ -70,6 +71,7 @@ var (
 	actionTargetStyle = lipgloss.NewStyle().
 				Foreground(colorSelectFg).
 				Background(colorSelectBg).
+				Reverse(basicColors).
 				Padding(0, 1)
 
 	pidStyle = lipgloss.NewStyle().
@@ -100,6 +102,7 @@ var (
 		s.Selected = s.Selected.
 			Foreground(colorSelectFg).
 			Background(colorSelectBg).
+			Reverse(basicColors).
 			Bold(false)
 		return s
 	}()
@@ -303,6 +306,7 @@ func InitialModel(version string) MainModel {
 	li.Width = 50
 	li.Prompt = "> "
 	li.PromptStyle = promptStyle
+	li.PlaceholderStyle = placeholderStyle
 	li.Blur()
 
 	ci := textinput.New()
@@ -311,6 +315,7 @@ func InitialModel(version string) MainModel {
 	ci.Width = 50
 	ci.Prompt = "> "
 	ci.PromptStyle = promptStyle
+	ci.PlaceholderStyle = placeholderStyle
 	ci.Blur()
 
 	ti := textinput.New()
@@ -319,6 +324,7 @@ func InitialModel(version string) MainModel {
 	ti.Width = 50
 	ti.Prompt = "> "
 	ti.PromptStyle = promptStyle
+	ti.PlaceholderStyle = placeholderStyle
 	ti.Blur()
 
 	pi := textinput.New()
@@ -327,6 +333,7 @@ func InitialModel(version string) MainModel {
 	pi.Width = 50
 	pi.Prompt = "> "
 	pi.PromptStyle = promptStyle
+	pi.PlaceholderStyle = placeholderStyle
 	pi.Blur()
 
 	vp := viewport.New(0, 0)
@@ -376,9 +383,7 @@ func InitialModel(version string) MainModel {
 }
 
 func Start(version string, targets []model.Target) error {
-	if os.Getenv("COLORTERM") == "" {
-		os.Setenv("COLORTERM", "truecolor") //nolint:errcheck
-	}
+	lipgloss.SetColorProfile(lipglossProfile(colorProfile))
 
 	p := tea.NewProgram(InitialModel(version).withTargets(targets), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

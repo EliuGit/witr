@@ -476,6 +476,13 @@ func (m *MainModel) updatePortDetailsWithMap(procMap map[int]model.Process) {
 						output.SanitizeTerminalLine(proc.Command),
 						cmd,
 					})
+				} else if p.PID == 0 {
+					rows = append(rows, table.Row{
+						fmt.Sprintf("%8s", "-"),
+						"-",
+						"(unknown)",
+						"owning process not visible",
+					})
 				} else {
 					rows = append(rows, table.Row{
 						fmt.Sprintf("%8d", p.PID),
@@ -631,7 +638,8 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 	green := lipgloss.NewStyle().Foreground(colorTreeTarget)
 	highlight := lipgloss.NewStyle().
 		Background(colorSelectBg).
-		Foreground(colorSelectFg)
+		Foreground(colorSelectFg).
+		Reverse(basicColors)
 	dim := lipgloss.NewStyle().Foreground(colorMuted)
 	sectionLabel := lipgloss.NewStyle().Foreground(colorSectionLabel).Bold(true)
 
