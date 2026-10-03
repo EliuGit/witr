@@ -86,7 +86,7 @@ jobs:
           check-latest: true
 
       - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
   vendor:
     name: "Code Quality: Vendor"
