@@ -190,6 +190,42 @@ func TestWarningsSuspiciousWorkingDirs(t *testing.T) {
 	}
 }
 
+func TestWarningsContainerWorkingDirNotSuspicious(t *testing.T) {
+	t.Parallel()
+
+	p := baseProc()
+	p.WorkingDir = "/"
+	p.ContainerID = "c67b85f01c07a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	if contains(wrap(p), "suspicious working directory") {
+		t.Errorf("a container's \"/\" working directory should not warn, got: %v", wrap(p))
+	}
+}
+
+func TestIsContainerCgroup(t *testing.T) {
+	t.Parallel()
+
+	const id = "c67b85f01c07a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name    string
+		cgroup  string
+		markers []string
+		want    bool
+	}{
+		{"docker systemd-driver scope", "0::/system.slice/docker-" + id + ".scope", []string{"docker"}, true},
+		{"docker cgroupfs-driver path", "12:pids:/docker/" + id, []string{"docker"}, true},
+		{"dockerd and docker-proxy", "0::/system.slice/docker.service", []string{"docker"}, false},
+		{"rootless podman container", "0::/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-" + id + ".scope", []string{"podman", "libpod"}, true},
+		{"podman API service", "0::/system.slice/podman.service", []string{"podman", "libpod"}, false},
+		{"containerd daemon and shims", "0::/system.slice/containerd.service", []string{"containerd"}, false},
+		{"another runtime's container", "0::/system.slice/docker-" + id + ".scope", []string{"containerd"}, false},
+	}
+	for _, tt := range tests {
+		if got := isContainerCgroup(tt.cgroup, tt.markers...); got != tt.want {
+			t.Errorf("%s: isContainerCgroup(%q, %v) = %v, want %v", tt.name, tt.cgroup, tt.markers, got, tt.want)
+		}
+	}
+}
+
 func TestWarningsContainerHealthcheck(t *testing.T) {
 	t.Parallel()
 

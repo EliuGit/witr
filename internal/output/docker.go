@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -81,7 +82,28 @@ func FormatContainerLine(match *model.ContainerMatch) string {
 	return parts
 }
 
+// RenderContainerFallback renders a container whose owning process witr
+// can't see from here.
 func RenderContainerFallback(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool) {
+	renderContainerView(w, targetLabel, match, colorEnabled, verbose, "The owning process is not visible in this environment.")
+}
+
+// RenderProxiedContainer renders the container behind a port that
+// docker-proxy publishes on the host.
+func RenderProxiedContainer(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, proxyPIDs []int) {
+	pids := make([]string, len(proxyPIDs))
+	for i, pid := range proxyPIDs {
+		pids[i] = strconv.Itoa(pid)
+	}
+	label := "pid"
+	if len(pids) > 1 {
+		label = "pids"
+	}
+	note := fmt.Sprintf("Published on the host by docker-proxy (%s %s).", label, strings.Join(pids, ", "))
+	renderContainerView(w, targetLabel, match, colorEnabled, verbose, note)
+}
+
+func renderContainerView(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, note string) {
 	out := NewPrinter(w)
 
 	name := SanitizeTerminalLine(match.Name)
@@ -126,6 +148,7 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 			out.Printf("Image       : %s\n", image)
 		}
 	}
+	printComposeOrigin(out, match, colorEnabled)
 
 	if command != "" {
 		if colorEnabled {
@@ -188,26 +211,31 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 				out.Printf("\nMounts      : %s\n", mounts)
 			}
 		}
-		if match.ComposeConfigFile != "" {
-			if colorEnabled {
-				out.Printf("%sCompose File%s: %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeConfigFile))
-			} else {
-				out.Printf("Compose File: %s\n", SanitizeTerminal(match.ComposeConfigFile))
-			}
-		}
-		if match.ComposeWorkingDir != "" {
-			if colorEnabled {
-				out.Printf("%sCompose Dir%s : %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeWorkingDir))
-			} else {
-				out.Printf("Compose Dir : %s\n", SanitizeTerminal(match.ComposeWorkingDir))
-			}
-		}
 	}
 
 	if colorEnabled {
-		out.Printf("\n%sNote%s        : The owning process is not visible in this environment.\n", ColorDimYellow, ColorReset)
+		out.Printf("\n%sNote%s        : %s\n", ColorDimYellow, ColorReset, note)
 	} else {
-		out.Printf("\nNote        : The owning process is not visible in this environment.\n")
+		out.Printf("\nNote        : %s\n", note)
+	}
+}
+
+// printComposeOrigin prints where a Compose-managed container was defined on
+// the host: its Compose file and project directory.
+func printComposeOrigin(out Printer, match *model.ContainerMatch, colorEnabled bool) {
+	if match.ComposeConfigFile != "" {
+		if colorEnabled {
+			out.Printf("%sCompose File%s: %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeConfigFile))
+		} else {
+			out.Printf("Compose File: %s\n", SanitizeTerminal(match.ComposeConfigFile))
+		}
+	}
+	if match.ComposeWorkingDir != "" {
+		if colorEnabled {
+			out.Printf("%sCompose Dir%s : %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeWorkingDir))
+		} else {
+			out.Printf("Compose Dir : %s\n", SanitizeTerminal(match.ComposeWorkingDir))
+		}
 	}
 }
 

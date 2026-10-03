@@ -570,7 +570,7 @@ Positional arguments (without flags) are treated as process or service names. Mu
 
 All target flags (`--pid`, `--port`, `--file`, `--container`) are repeatable and can be mixed with each other and with positional name arguments. When multiple targets are provided, results are shown sequentially with labeled dividers. All output modes (standard, short, tree, JSON, env, warnings, verbose) work with multiple inputs.
 
-The `--container` flag searches across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails, and matches against container name, image, command, and compose project/service labels.
+The `--container` flag searches across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails, and matches against container name, image, command, and compose project/service labels, or a container ID (full, short, or a prefix of at least 4 characters).
 
 The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used.
 
@@ -700,7 +700,7 @@ Explains the process holding a file open.
 witr --container redis
 ```
 
-Looks up a container by name, image, command, or compose project/service across every detected runtime (Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, FreeBSD jails). Pass `--verbose` to include mounts, networks, and compose metadata in the output.
+Looks up a container by name, ID, image, command, or compose project/service across every detected runtime (Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, FreeBSD jails). The output includes the container's image and, for Compose services, the Compose file and project directory on the host. Pass `--verbose` to include mounts.
 
 ---
 
@@ -853,7 +853,7 @@ Non‑blocking observations such as:
 | Listening ports | ✅ | ✅ | ✅ | ✅ | |
 | Bind addresses | ✅ | ✅ | ✅ | ✅ | |
 | Port → PID resolution | ✅ | ✅ | ✅ | ✅ | |
-| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. |
+| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime, or published by Docker's `docker-proxy`. |
 | **Service Detection** |
 | Service Manager | ✅ | ✅ | ✅ | ✅ | Linux: systemd, macOS: launchd, Windows: Services, FreeBSD: rc.d |
 | Service Description | ✅ | ✅ | ✅ | ✅ | Linux: `Description`, macOS: `Comment`, Windows: `Display Name`, FreeBSD: `rc` header |

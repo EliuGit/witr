@@ -38,6 +38,66 @@ func TestRenderContainerFallback(t *testing.T) {
 	}
 }
 
+func TestRenderProxiedContainer(t *testing.T) {
+	match := &model.ContainerMatch{
+		Runtime:           "docker",
+		ID:                "c67b85f01c07",
+		Name:              "rustfs",
+		Image:             "rustfs/rustfs:latest",
+		ComposeConfigFile: "/root/app/rustfs/compose.yml",
+	}
+
+	var buf bytes.Buffer
+	RenderProxiedContainer(&buf, "port 3120", match, false, false, []int{5196, 5197})
+	out := buf.String()
+
+	for _, want := range []string{
+		"Target      : port 3120",
+		"Compose File: /root/app/rustfs/compose.yml",
+		"Published on the host by docker-proxy (pids 5196, 5197).",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("RenderProxiedContainer output missing %q\nGot:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "not visible") {
+		t.Errorf("a proxied container's process is visible; got:\n%s", out)
+	}
+}
+
+func TestRenderStandardContainerDetails(t *testing.T) {
+	proc := model.Process{PID: 8089, Command: "rustfs", Container: "docker: rustfs/rustfs (rustfs)"}
+	r := model.Result{
+		Process:  proc,
+		Ancestry: []model.Process{{PID: 1, Command: "systemd"}, proc},
+		Container: &model.ContainerMatch{
+			Image:             "rustfs/rustfs:latest",
+			ComposeConfigFile: "/root/app/rustfs/compose.yml",
+			ComposeWorkingDir: "/root/app/rustfs",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderStandard(&buf, r, false, false)
+	out := buf.String()
+	for _, want := range []string{
+		"Image       : rustfs/rustfs:latest",
+		"Compose File: /root/app/rustfs/compose.yml",
+		"Compose Dir : /root/app/rustfs",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("standard output missing %q\nGot:\n%s", want, out)
+		}
+	}
+
+	buf.Reset()
+	r.Container = nil
+	RenderStandard(&buf, r, false, false)
+	if strings.Contains(buf.String(), "Image") {
+		t.Errorf("no container details should mean no Image line, got:\n%s", buf.String())
+	}
+}
+
 func TestRenderContainerFallbackWithCompose(t *testing.T) {
 	match := &model.ContainerMatch{
 		Runtime:        "docker",

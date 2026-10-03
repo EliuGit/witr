@@ -32,7 +32,9 @@ var rootlessBins = map[string]bool{
 	"nerdctl": true,
 }
 
-func dockerLikeList(bin, runtime string) []*model.ContainerMatch {
+// dockerLikeList lists running containers via a docker-compatible CLI,
+// narrowed by any extra `ps` arguments (e.g. "--filter", "id=<id>").
+func dockerLikeList(bin, runtime string, filters ...string) []*model.ContainerMatch {
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
 	defer cancel()
 
@@ -53,7 +55,8 @@ func dockerLikeList(bin, runtime string) []*model.ContainerMatch {
 		"{{.Ports}}",
 		"{{.Labels}}",
 	}, "|")
-	out, err := runtimeCommand(ctx, bin, "ps", "--no-trunc", "--format", format).Output()
+	args := append([]string{"ps", "--no-trunc", "--format", format}, filters...)
+	out, err := runtimeCommand(ctx, bin, args...).Output()
 	if err != nil {
 		return nil
 	}

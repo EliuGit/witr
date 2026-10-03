@@ -49,6 +49,9 @@ func ResolveContainer(query string, exact bool) []*model.ContainerMatch {
 }
 
 func matchContainer(c *model.ContainerMatch, query string, exact bool) bool {
+	if matchContainerID(strings.ToLower(c.ID), query, exact) {
+		return true
+	}
 	fields := []string{
 		strings.ToLower(c.Name),
 		strings.ToLower(c.Image),
@@ -69,6 +72,20 @@ func matchContainer(c *model.ContainerMatch, query string, exact bool) bool {
 		}
 	}
 	return false
+}
+
+// matchContainerID matches the way docker accepts an ID: in exact mode the
+// full or short (12-char) ID, otherwise any prefix. Queries shorter than 4
+// characters or not hex are left to the name fields, so a name like "db"
+// can't collide with an ID that starts the same way.
+func matchContainerID(id, query string, exact bool) bool {
+	if len(query) < 4 || strings.Trim(query, "0123456789abcdef") != "" {
+		return false
+	}
+	if exact {
+		return id == query || (len(id) > 12 && id[:12] == query)
+	}
+	return strings.HasPrefix(id, query)
 }
 
 // ListAllContainers returns every container reported by every available

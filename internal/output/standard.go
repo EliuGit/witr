@@ -140,6 +140,16 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 			out.Printf("Container   : %s\n", proc.Container)
 		}
 	}
+	if c := r.Container; c != nil {
+		if image := SanitizeTerminalLine(c.Image); image != "" {
+			if colorEnabled {
+				out.Printf("%sImage%s       : %s\n", ColorBlue, ColorReset, image)
+			} else {
+				out.Printf("Image       : %s\n", image)
+			}
+		}
+		printComposeOrigin(out, c, colorEnabled)
+	}
 	// Service
 	if proc.Service != "" {
 		if colorEnabled {

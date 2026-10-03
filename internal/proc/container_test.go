@@ -4,6 +4,61 @@ import (
 	"testing"
 )
 
+func TestDockerProxyHostPort(t *testing.T) {
+	tests := []struct {
+		cmdline string
+		want    int
+		wantOK  bool
+	}{
+		{"/usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 3120 -container-ip 172.29.0.2 -container-port 9000", 3120, true},
+		{"/usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port", 0, false},
+		{"/usr/bin/docker-proxy -host-port abc", 0, false},
+		{"/usr/bin/docker-proxy -container-port 9000", 0, false},
+	}
+	for _, tt := range tests {
+		got, ok := dockerProxyHostPort(tt.cmdline)
+		if got != tt.want || ok != tt.wantOK {
+			t.Errorf("dockerProxyHostPort(%q) = %d, %v; want %d, %v", tt.cmdline, got, ok, tt.want, tt.wantOK)
+		}
+	}
+}
+
+func TestContainerByIDRejectsUnsupportedInput(t *testing.T) {
+	// Neither case may reach a runtime CLI: an ID that could parse as an
+	// option, or a runtime without a docker-compatible `ps`.
+	if c := ContainerByID("--all", "docker"); c != nil {
+		t.Errorf("ContainerByID with an option-like ID = %+v, want nil", c)
+	}
+	if c := ContainerByID("c67b85f01c07", "crictl"); c != nil {
+		t.Errorf("ContainerByID for crictl = %+v, want nil", c)
+	}
+}
+
+func TestMatchContainerID(t *testing.T) {
+	const id = "c67b85f01c07a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name  string
+		query string
+		exact bool
+		want  bool
+	}{
+		{"short ID", "c67b85f01c07", false, true},
+		{"full ID", id, false, true},
+		{"short prefix", "c67b", false, true},
+		{"too short to be an ID", "c67", false, false},
+		{"not hex", "rustfs", false, false},
+		{"other ID", "deadbeef", false, false},
+		{"exact short ID", "c67b85f01c07", true, true},
+		{"exact full ID", id, true, true},
+		{"exact rejects a bare prefix", "c67b", true, false},
+	}
+	for _, tt := range tests {
+		if got := matchContainerID(id, tt.query, tt.exact); got != tt.want {
+			t.Errorf("%s: matchContainerID(%q, exact=%v) = %v, want %v", tt.name, tt.query, tt.exact, got, tt.want)
+		}
+	}
+}
+
 func TestSplitCmdline(t *testing.T) {
 	tests := []struct {
 		name string

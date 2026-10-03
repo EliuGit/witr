@@ -57,12 +57,15 @@ func ReadProcess(pid int) (model.Process, error) {
 	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
 	if cgroupData, err := os.ReadFile(cgroupFile); err == nil {
 		cgroupStr := string(cgroupData)
+		// A runtime's own service (docker.service, podman.service,
+		// containerd.service) names the runtime too, but holds its daemons and
+		// helpers (dockerd, docker-proxy, containerd-shim), not containers. Only
+		// a container ID marks a process as inside a container.
 		switch {
 		case strings.Contains(cgroupStr, "docker"):
-			container = "docker"
-			containerRuntime = "docker"
 			containerID = extractContainerID(cgroupStr, "docker-", "docker/")
 			if containerID != "" {
+				containerRuntime = "docker"
 				if name := resolveContainerName(containerID, "docker"); name != "" {
 					container = name
 				} else {
@@ -71,10 +74,9 @@ func ReadProcess(pid int) (model.Process, error) {
 			}
 
 		case strings.Contains(cgroupStr, "podman"), strings.Contains(cgroupStr, "libpod"):
-			container = "podman"
-			containerRuntime = "podman"
 			containerID = extractContainerID(cgroupStr, "libpod-", "libpod/")
 			if containerID != "" {
+				containerRuntime = "podman"
 				if name := resolveContainerName(containerID, "podman"); name != "" {
 					container = name
 				} else {
@@ -95,10 +97,9 @@ func ReadProcess(pid int) (model.Process, error) {
 			}
 
 		case strings.Contains(cgroupStr, "containerd"):
-			container = "containerd"
-			containerRuntime = "nerdctl"
 			if id := findLongHexID(cgroupStr); id != "" {
 				containerID = id
+				containerRuntime = "nerdctl"
 				if name := resolveContainerName(containerID, "nerdctl"); name != "" {
 					container = "containerd: " + name
 				} else {

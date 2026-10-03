@@ -82,6 +82,13 @@ func TestExtractContainerID(t *testing.T) {
 			want:        "",
 		},
 		{
+			name:        "docker.service daemon cgroup has no container ID",
+			cgroup:      "0::/system.slice/docker.service",
+			dashPrefix:  "docker-",
+			slashPrefix: "docker/",
+			want:        "",
+		},
+		{
 			name:        "no matching prefix",
 			cgroup:      "0::/user.slice/user-1000.slice/session-2.scope",
 			dashPrefix:  "docker-",

@@ -211,7 +211,9 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 		w = append(w, "Process has been running for over 90 days")
 	}
 
-	if suspiciousDirs[last.WorkingDir] {
+	// A container's working directory is a path inside the container's own
+	// filesystem (usually "/"), so this host-path check doesn't apply.
+	if suspiciousDirs[last.WorkingDir] && last.ContainerID == "" {
 		w = append(w, "Process is running from a suspicious working directory: "+last.WorkingDir)
 	}
 

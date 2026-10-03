@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -14,56 +13,22 @@ import (
 // ResolveContainerByPort queries the Docker CLI for a container publishing
 // the given port. Returns nil if Docker is unavailable or no container matches.
 func ResolveContainerByPort(port int) *model.ContainerMatch {
-	if _, err := exec.LookPath("docker"); err != nil {
+	if ms := dockerLikeList("docker", "docker", "--filter", fmt.Sprintf("publish=%d", port)); len(ms) > 0 {
+		return ms[0]
+	}
+	return nil
+}
+
+// ContainerByID returns the Docker or Podman container with the given ID, or
+// nil when the runtime can't be queried or doesn't know it.
+func ContainerByID(id, runtime string) *model.ContainerMatch {
+	if !isValidContainerID(id) || (runtime != "docker" && runtime != "podman") {
 		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	format := strings.Join([]string{
-		"{{.ID}}", "{{.Names}}", "{{.Image}}", "{{.Command}}",
-		"{{.State}}", "{{.Status}}", "{{.CreatedAt}}",
-		"{{.Networks}}", "{{.Mounts}}", "{{.Ports}}", "{{.Labels}}",
-	}, "|")
-	cmd := exec.CommandContext(ctx, "docker", "ps", "--no-trunc", "--filter", fmt.Sprintf("publish=%d", port), "--format", format)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
+	if ms := dockerLikeList(runtime, runtime, "--filter", "id="+id); len(ms) == 1 {
+		return ms[0]
 	}
-
-	line := strings.TrimSpace(string(out))
-	if line == "" {
-		return nil
-	}
-	if idx := strings.Index(line, "\n"); idx >= 0 {
-		line = line[:idx]
-	}
-
-	parts := strings.SplitN(line, "|", 11)
-	if len(parts) < 11 {
-		return nil
-	}
-	labels := parseLabelString(parts[10])
-
-	return &model.ContainerMatch{
-		Runtime:           "docker",
-		ID:                parts[0],
-		Name:              parts[1],
-		Image:             parts[2],
-		Command:           strings.Trim(parts[3], "\""),
-		State:             parts[4],
-		Status:            parts[5],
-		Health:            healthFromStatus(parts[5]),
-		CreatedAt:         parseDockerTime(parts[6]),
-		Networks:          parts[7],
-		Mounts:            parts[8],
-		Ports:             parts[9],
-		ComposeProject:    labels["com.docker.compose.project"],
-		ComposeService:    labels["com.docker.compose.service"],
-		ComposeConfigFile: labels["com.docker.compose.project.config_files"],
-		ComposeWorkingDir: labels["com.docker.compose.project.working_dir"],
-	}
+	return nil
 }
 
 // isValidContainerID reports whether id is a safe container identifier to hand

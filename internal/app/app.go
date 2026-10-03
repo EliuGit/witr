@@ -420,6 +420,16 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 		return handleResolveError(cmd, outw, outp, t, err, flags, multiMode, jsonResults)
 	}
 
+	// A port Docker publishes through docker-proxy (often one proxy each for
+	// IPv4 and IPv6) is explained by the container behind it.
+	if t.Type == model.TargetPort {
+		if port, convErr := strconv.Atoi(t.Value); convErr == nil {
+			if match := dockerProxyContainer(port, pids); match != nil {
+				return renderContainerMatch(outw, outp, "port "+t.Value, match, flags, multiMode, jsonResults, pids)
+			}
+		}
+	}
+
 	if len(pids) > 1 {
 		if multiMode && flags.json {
 			*jsonResults = append(*jsonResults, jsonErrorEntry(t, fmt.Sprintf("multiple processes matched (%d results)", len(pids))))
@@ -783,6 +793,9 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 		if len(res.Ancestry) > 0 {
 			res.Ancestry[len(res.Ancestry)-1].Container = res.Process.Container
 		}
+		if res.Container == nil {
+			res.Container = match
+		}
 		renderResult(outw, res, flags, multiMode, jsonResults)
 		if len(res.Warnings) > 0 {
 			return ExitWarnings
@@ -790,7 +803,14 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 		return ExitOK
 	}
 
-	label := "container " + match.Name
+	return renderContainerMatch(outw, outp, "container "+match.Name, match, flags, multiMode, jsonResults, nil)
+}
+
+// renderContainerMatch renders a container in the selected output mode.
+// proxyPIDs lists the docker-proxy processes publishing it, when the target
+// was a port they listen on.
+func renderContainerMatch(outw io.Writer, outp output.Printer, label string, match *model.ContainerMatch, flags appFlags, multiMode bool, jsonResults *[]string, proxyPIDs []int) int {
+	colorEnabled := useColor(flags, outw)
 	switch {
 	case flags.json:
 		jsonStr, err := output.ContainerFallbackToJSON(label, match)
@@ -809,10 +829,28 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 		output.RenderContainerFallbackTree(outw, match, colorEnabled)
 	case flags.warn:
 		output.RenderContainerFallbackWarnings(outw, match, colorEnabled)
+	case len(proxyPIDs) > 0:
+		output.RenderProxiedContainer(outw, label, match, colorEnabled, flags.verbose, proxyPIDs)
 	default:
 		output.RenderContainerFallback(outw, label, match, colorEnabled, flags.verbose)
 	}
 	return ExitOK
+}
+
+// dockerProxyContainer returns the container behind a port whose listeners
+// are all docker-proxy processes, the plumbing Docker uses to publish a
+// container's port on the host.
+func dockerProxyContainer(port int, pids []int) *model.ContainerMatch {
+	for _, pid := range pids {
+		if !procpkg.IsDockerProxyFor(pid, port) {
+			return nil
+		}
+	}
+	match := procpkg.ResolveContainerByPort(port)
+	if match != nil {
+		procpkg.EnrichContainer(match)
+	}
+	return match
 }
 
 func SetVersion(v string, c string, bd string) {
