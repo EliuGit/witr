@@ -19,16 +19,25 @@ func ResolveContainerByPort(port int) *model.ContainerMatch {
 	return nil
 }
 
-// ContainerByID returns the Docker or Podman container with the given ID, or
-// nil when the runtime can't be queried or doesn't know it.
+// ContainerByID returns the Docker, Podman or nerdctl container with the given
+// ID, or nil when the runtime can't be queried or doesn't know it.
 func ContainerByID(id, runtime string) *model.ContainerMatch {
-	if !isValidContainerID(id) || (runtime != "docker" && runtime != "podman") {
+	label, ok := dockerLikeRuntimeLabels[runtime]
+	if !ok || !isValidContainerID(id) {
 		return nil
 	}
-	if ms := dockerLikeList(runtime, runtime, "--filter", "id="+id); len(ms) == 1 {
+	if ms := dockerLikeList(runtime, label, "--filter", "id="+id); len(ms) == 1 {
 		return ms[0]
 	}
 	return nil
+}
+
+// dockerLikeRuntimeLabels maps each docker-compatible CLI to the runtime name
+// its containers are reported under.
+var dockerLikeRuntimeLabels = map[string]string{
+	"docker":  "docker",
+	"podman":  "podman",
+	"nerdctl": "containerd",
 }
 
 // isValidContainerID reports whether id is a safe container identifier to hand

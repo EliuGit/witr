@@ -38,7 +38,9 @@ func detectContainer(ancestry []model.Process) *model.Source {
 				Type: model.SourceContainer,
 				Name: "colima",
 			}
-		case isContainerCgroup(content, "containerd"):
+		// Containers started directly through containerd (nerdctl) have
+		// cgroups that never name it; the process reader recognises them.
+		case isContainerCgroup(content, "containerd"), p.ContainerRuntime == "nerdctl":
 			return &model.Source{
 				Type: model.SourceContainer,
 				Name: "containerd",

@@ -5,6 +5,7 @@ package proc
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,8 +97,12 @@ func ReadProcess(pid int) (model.Process, error) {
 				}
 			}
 
-		case strings.Contains(cgroupStr, "containerd"):
-			if id := findLongHexID(cgroupStr); id != "" {
+		case strings.Contains(cgroupStr, "containerd"), containerdCgroupID(cgroupStr) != "":
+			id := containerdCgroupID(cgroupStr)
+			if id == "" {
+				id = findLongHexID(cgroupStr)
+			}
+			if id != "" {
 				containerID = id
 				containerRuntime = "nerdctl"
 				if name := resolveContainerName(containerID, "nerdctl"); name != "" {
@@ -367,6 +372,25 @@ func extractContainerID(cgroup, dashPrefix, slashPrefix string) string {
 		}
 	}
 	return ""
+}
+
+// containerdCgroupPattern matches the cgroups of containers started directly
+// through containerd (e.g. by nerdctl), which never name containerd itself:
+// "/<namespace>/<id>" under the cgroupfs driver, or "nerdctl-<id>.scope" under
+// the systemd driver.
+var containerdCgroupPattern = regexp.MustCompile(`(?m):/[^/\n]+/([0-9a-f]{64})(?:/|$)|/nerdctl-([0-9a-f]{64})\.scope`)
+
+// containerdCgroupID returns the container ID from a containerd cgroup, or ""
+// when the cgroup isn't one.
+func containerdCgroupID(cgroup string) string {
+	m := containerdCgroupPattern.FindStringSubmatch(cgroup)
+	if m == nil {
+		return ""
+	}
+	if m[1] != "" {
+		return m[1]
+	}
+	return m[2]
 }
 
 func extractLXCBasedContainerName(cgroup string) string {
