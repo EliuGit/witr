@@ -352,12 +352,12 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		if r.ResourceContext != nil {
 			if colorEnabled {
 				if r.ResourceContext.CPUUsage > 70 {
-					out.Printf("%sCPU%s         : %s%.1f%%%s\n", ColorRed, ColorReset, ColorDimYellow, r.ResourceContext.CPUUsage, ColorReset)
+					out.Printf("%sCPU (avg)%s   : %s%.1f%%%s\n", ColorRed, ColorReset, ColorDimYellow, r.ResourceContext.CPUUsage, ColorReset)
 				} else {
-					out.Printf("%sCPU%s         : %.1f%%\n", ColorGreen, ColorReset, r.ResourceContext.CPUUsage)
+					out.Printf("%sCPU (avg)%s   : %.1f%%\n", ColorGreen, ColorReset, r.ResourceContext.CPUUsage)
 				}
 			} else {
-				out.Printf("CPU         : %.1f%%\n", r.ResourceContext.CPUUsage)
+				out.Printf("CPU (avg)   : %.1f%%\n", r.ResourceContext.CPUUsage)
 			}
 
 			if r.ResourceContext.PreventsSleep {

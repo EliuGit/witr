@@ -322,7 +322,7 @@ func (m MainModel) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		processListWidth = 10
 	}
 
-	fixedColumnsWidth := 81 // PID(8)+Name(20)+User(12)+CPU(6)+Mem(16)+Started(19)
+	fixedColumnsWidth := 84 // PID(8)+Name(20)+User(12)+CPU(9)+Mem(16)+Started(19)
 	cmdWidth := processListWidth - fixedColumnsWidth - 12
 	m.showCmdCol = cmdWidth >= 15
 	if cmdWidth < 10 {

@@ -283,7 +283,7 @@ func (m *MainModel) filterProcesses() {
 				fmt.Sprintf("%8d", p.PID),
 				output.SanitizeTerminalLine(p.User),
 				truncateMiddle(output.SanitizeTerminalLine(p.Command), nameWidth),
-				fmt.Sprintf("%6s", fmt.Sprintf("%.1f%%", p.CPUPercent)),
+				fmt.Sprintf("%9s", fmt.Sprintf("%.1f%%", p.CPUPercent)),
 				fmt.Sprintf("%16s", fmt.Sprintf("%s (%.1f%%)", formatBytes(p.MemoryRSS), p.MemoryPercent)),
 				startedStr,
 			}
@@ -311,7 +311,7 @@ func (m *MainModel) getColumns() []table.Column {
 		{Title: "PID", Width: 8},
 		{Title: "User", Width: 12},
 		{Title: "Name", Width: 20},
-		{Title: "CPU%", Width: 6},
+		{Title: "Avg CPU", Width: 9},
 		{Title: "Mem", Width: 16},
 		{Title: "Started", Width: 19},
 	}

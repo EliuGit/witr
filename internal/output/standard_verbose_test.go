@@ -68,7 +68,7 @@ func TestRenderStandardPlainVerbose(t *testing.T) {
 	out := buf.String()
 
 	for _, want := range []string{
-		"CPU         :", "Memory:", "I/O Statistics", "Open Files  :",
+		"CPU (avg)   :", "Memory:", "I/O Statistics", "Open Files  :",
 		"File Descriptors:", "Socket      :", "Threads: 4", "Children of nginx",
 	} {
 		if !strings.Contains(out, want) {

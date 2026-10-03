@@ -588,7 +588,7 @@ a.brand-mark:hover { text-decoration: underline; }
 .tui-hdr.accent { color: var(--t-accent); border-bottom-color: var(--t-accent); }
 /* table rows */
 .tui-rows { flex: 1 1 auto; overflow-y: auto; overflow-x: auto; }
-.tui-r { display: grid; grid-template-columns: 52px 80px 118px 54px 138px 118px minmax(120px, 1fr); gap: 8px;
+.tui-r { display: grid; grid-template-columns: 52px 80px 118px 62px 138px 118px minmax(120px, 1fr); gap: 8px;
   padding: 0 2px; white-space: nowrap; cursor: pointer; }
 .tui-r > span { overflow: hidden; text-overflow: ellipsis; }
 .tui-r.head { color: var(--t-accent); font-weight: 700; border-bottom: 1px solid var(--t-border); padding-bottom: 3px; margin-bottom: 3px; position: sticky; top: 0; background: var(--t-surface); }

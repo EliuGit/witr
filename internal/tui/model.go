@@ -217,7 +217,7 @@ func InitialModel(version string) MainModel {
 		{Title: "PID", Width: 8},
 		{Title: "User", Width: 12},
 		{Title: "Name", Width: 20},
-		{Title: "CPU%", Width: 6},
+		{Title: "Avg CPU", Width: 9},
 		{Title: "Mem", Width: 16},
 		{Title: "Started", Width: 19},
 		{Title: "Command", Width: 50},

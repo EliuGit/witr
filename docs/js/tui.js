@@ -306,7 +306,7 @@ export class TUI {
     const now = this.engine.now();
     const total = this.world.memTotalBytes || 8 * 1024 * 1024 * 1024;
     let table = `<div class="tui-r head"><span class="tui-num">PID</span><span>User</span><span>Name</span>` +
-      `<span class="tui-num">CPU%</span><span class="tui-num">Mem ↓</span><span>Started</span><span>Command</span></div>`;
+      `<span class="tui-num">Avg CPU</span><span class="tui-num">Mem ↓</span><span>Started</span><span>Command</span></div>`;
     let body = '';
     rows.forEach((p, i) => {
       const started = fmtStarted(now - (p.startedAgo || 0) * 1000);
