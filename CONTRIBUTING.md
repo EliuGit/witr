@@ -124,6 +124,7 @@ go test -v ./...
 # Verify cross-compilation
 GOOS=linux  GOARCH=amd64 go build -v ./cmd/witr
 GOOS=linux  GOARCH=arm64 go build -v ./cmd/witr
+GOOS=linux  GOARCH=loong64 go build -v ./cmd/witr
 GOOS=darwin GOARCH=amd64 go build -v ./cmd/witr
 GOOS=darwin GOARCH=arm64 go build -v ./cmd/witr
 ```

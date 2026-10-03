@@ -34,12 +34,24 @@ jobs:
           fi
 
   golangci-lint:
-    name: "Code Quality: Lint (${{ matrix.goos }})"
+    name: "Code Quality: Lint (${{ matrix.goos }}/${{ matrix.goarch }})"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        goos: [linux, darwin, windows, freebsd]
+        include:
+          - goos: linux
+            goarch: amd64
+          # LoongArch (龙芯) is a Linux-only architecture; lint the linux/loong64
+          # build so build-tag/arch regressions surface in CI.
+          - goos: linux
+            goarch: loong64
+          - goos: darwin
+            goarch: amd64
+          - goos: windows
+            goarch: amd64
+          - goos: freebsd
+            goarch: amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -58,6 +70,7 @@ jobs:
           version: v2.12.2
         env:
           GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
 
   govulncheck:
     name: "Security: Vulnerability Scan"

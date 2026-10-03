@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/pranshuparmar/witr/main/install.sh 
 
 The script will:
 - Detect your operating system (`linux`, `darwin` or `freebsd`)
-- Detect your CPU architecture (`amd64` or `arm64`)
+- Detect your CPU architecture (`amd64`, `arm64` or `loong64` on Linux)
 - Download the latest released binary and man page
 - Install it to `/usr/local/bin/witr`
 - Install the man page to `/usr/local/share/man/man1/witr.1`
@@ -369,6 +369,7 @@ OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 [ "$ARCH" = "x86_64" ] && ARCH="amd64"
 [ "$ARCH" = "aarch64" ] && ARCH="arm64"
+[ "$ARCH" = "loongarch64" ] && ARCH="loong64"
 
 # 2. Download the binary
 curl -fsSL "https://github.com/pranshuparmar/witr/releases/latest/download/witr-${OS}-${ARCH}" -o witr
@@ -825,7 +826,7 @@ Non‑blocking observations such as:
 
 ## 8. Platform Support
 
-- **Linux** (x86_64, arm64) - Full feature support (`/proc`).
+- **Linux** (x86_64, arm64, loong64) - Full feature support (`/proc`).
 - **macOS** (x86_64, arm64) - Uses `ps`, `lsof`, `sysctl`, `pgrep`.
 - **Windows** (x86_64, arm64) - Native Win32 APIs (ToolHelp32, PSAPI, Service Control Manager). No PowerShell or WMI dependency.
 - **FreeBSD** (x86_64, arm64) - Uses `procstat`, `ps`, `lsof`.
