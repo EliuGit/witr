@@ -3,6 +3,7 @@ name: Smoke Tests
 on:
   pull_request:
     branches: [ "main", "staging" ]
+  workflow_dispatch:
 
 permissions: read-all
 
@@ -65,8 +66,7 @@ jobs:
         shell: bash
         run: |
           GOOS=linux GOARCH=loong64 CGO_ENABLED=0 go build -o witr-linux-loong64 ./cmd/witr
-          test -s witr-linux-loong64
-          go version -m witr-linux-loong64 | head -5
+          file witr-linux-loong64 | grep LoongArch
 
   test-freebsd:
     name: "Test: FreeBSD"

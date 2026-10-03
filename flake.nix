@@ -11,7 +11,7 @@
       inherit (nixpkgs) lib;
     in
     {
-      packages = lib.genAttrs [ "x86_64-linux" "aarch64-linux" "loongarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (
+      packages = lib.genAttrs [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
@@ -65,11 +65,11 @@
         }
       );
 
-      formatter = lib.genAttrs [ "x86_64-linux" "aarch64-linux" "loongarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (
+      formatter = lib.genAttrs [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (
         system: nixpkgs.legacyPackages.${system}.nixpkgs-fmt
       );
 
-      apps = lib.genAttrs [ "x86_64-linux" "aarch64-linux" "loongarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (system: {
+      apps = lib.genAttrs [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (system: {
         default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/witr";
