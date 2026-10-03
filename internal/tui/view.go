@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -195,6 +196,10 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 			filterStatus = "ALL"
 		}
 		helpText = fmt.Sprintf("Total: %d [%s] | p/t/n/s: Sort | a: Toggle All | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.portTable.Rows()), filterStatus)
+		// Windows reports every socket's owner; elsewhere other users' are hidden.
+		if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+			helpText += " | (use sudo to see all owners)"
+		}
 	case tabContainers:
 		helpText = fmt.Sprintf("Total: %d | Enter: Detail | i/n/r/g/s: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll", len(m.containerTable.Rows()))
 	case tabLocks:

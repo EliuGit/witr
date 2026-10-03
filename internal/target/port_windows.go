@@ -4,76 +4,50 @@ package target
 
 import (
 	"fmt"
-	"os/exec"
-	"strconv"
-	"strings"
+
+	procpkg "github.com/pranshuparmar/witr/internal/proc"
 )
 
 func ResolvePort(port int) ([]int, error) {
-	// netstat -ano
-	out, err := exec.Command("netstat", "-ano").Output()
+	socks, err := procpkg.ListSockets()
 	if err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(string(out), "\n")
-	portStr := fmt.Sprintf(":%d", port)
 	var pids, fallbackPIDs []int
 	seen := make(map[int]bool)
 	fallbackSeen := make(map[int]bool)
 	sawListenNoOwner := false
 
-	for _, line := range lines {
-		if !strings.Contains(line, portStr) {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
-			continue
-		}
+	for _, s := range socks {
+		matchesLocal := s.LocalPort == port
 
-		proto := strings.ToUpper(fields[0])
-		localAddr := fields[1]
-		foreignAddr := fields[2]
-
-		matchesLocal := strings.HasSuffix(localAddr, portStr)
-		matchesForeign := strings.HasSuffix(foreignAddr, portStr)
-		if !matchesLocal && !matchesForeign {
-			continue
-		}
-
-		if strings.HasPrefix(proto, "TCP") {
-			// TCP: Proto LocalAddr ForeignAddr State PID
-			if len(fields) < 5 {
-				continue
+		if s.Protocol == "UDP" {
+			if matchesLocal && s.PID != 0 && !seen[s.PID] {
+				pids = append(pids, s.PID)
+				seen[s.PID] = true
 			}
-			pid, _ := strconv.Atoi(fields[4])
-			isListen := matchesLocal && fields[3] == "LISTENING"
-			if pid == 0 {
-				if isListen {
-					sawListenNoOwner = true
-				}
-				continue
-			}
+			continue
+		}
+
+		if !matchesLocal && s.RemotePort != port {
+			continue
+		}
+		isListen := matchesLocal && s.State == "LISTEN"
+		if s.PID == 0 {
 			if isListen {
-				if !seen[pid] {
-					pids = append(pids, pid)
-					seen[pid] = true
-				}
-			} else if !fallbackSeen[pid] {
-				fallbackPIDs = append(fallbackPIDs, pid)
-				fallbackSeen[pid] = true
+				sawListenNoOwner = true
 			}
-		} else if strings.HasPrefix(proto, "UDP") {
-			// UDP: Proto LocalAddr *:* PID (no state column)
-			if !matchesLocal || len(fields) < 4 {
-				continue
+			continue
+		}
+		if isListen {
+			if !seen[s.PID] {
+				pids = append(pids, s.PID)
+				seen[s.PID] = true
 			}
-			pid, _ := strconv.Atoi(fields[3])
-			if pid != 0 && !seen[pid] {
-				pids = append(pids, pid)
-				seen[pid] = true
-			}
+		} else if !fallbackSeen[s.PID] {
+			fallbackPIDs = append(fallbackPIDs, s.PID)
+			fallbackSeen[s.PID] = true
 		}
 	}
 

@@ -3,6 +3,9 @@
 package proc
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -11,14 +14,29 @@ import (
 )
 
 func ListOpenPorts() ([]model.OpenPort, error) {
-	cmd := exec.Command("lsof", "-i", "-P", "-n")
-	out, err := cmd.Output()
-	if err != nil {
+	// lsof exits 1 when it has nothing to list (e.g. a user with no sockets);
+	// its output is still valid.
+	out, err := exec.Command("lsof", "-i", "-P", "-n").Output()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
 		return nil, err
 	}
+	ports := parseLsofPorts(string(out))
 
+	// Without root, lsof only sees this user's processes. netstat sees every
+	// socket but not its owner, so list the rest with no owner (PID 0).
+	if os.Geteuid() != 0 {
+		if out, err := exec.Command("netstat", "-an").Output(); err == nil {
+			ports = append(ports, unownedPorts(string(out), ports)...)
+		}
+	}
+	return ports, nil
+}
+
+// parseLsofPorts parses `lsof -i -P -n` output.
+func parseLsofPorts(out string) []model.OpenPort {
 	var ports []model.OpenPort
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 
 	startIdx := 0
 	if len(lines) > 0 && strings.HasPrefix(lines[0], "COMMAND") {
@@ -48,7 +66,8 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 			}
 		}
 
-		nameField := fields[8] // Address:Port
+		// Address:Port, or local->remote for a connected socket.
+		nameField, _, _ := strings.Cut(fields[8], "->")
 		state := "UNKNOWN"
 		if len(fields) > 9 {
 			state = strings.Trim(fields[9], "()")
@@ -82,7 +101,48 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 		}
 	}
 
-	return ports, nil
+	return ports
+}
+
+// unownedPorts returns the sockets in `netstat -an` output that no owned port
+// accounts for, with no owner (PID 0). TIME_WAIT sockets belong to no process
+// and are left out, as on Linux.
+func unownedPorts(netstatOut string, owned []model.OpenPort) []model.OpenPort {
+	key := func(p model.OpenPort) string {
+		return fmt.Sprintf("%s|%s|%d|%s", p.Protocol, p.Address, p.Port, p.State)
+	}
+	seen := make(map[string]bool, len(owned))
+	for _, p := range owned {
+		seen[key(p)] = true
+	}
+
+	var ports []model.OpenPort
+	for line := range strings.Lines(netstatOut) {
+		// Proto Recv-Q Send-Q Local Foreign (state)
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		var p model.OpenPort
+		switch {
+		case strings.HasPrefix(fields[0], "tcp"):
+			if len(fields) < 6 || fields[5] == "TIME_WAIT" {
+				continue
+			}
+			p.Protocol, p.State = "TCP", fields[5]
+		case strings.HasPrefix(fields[0], "udp"):
+			p.Protocol, p.State = "UDP", "OPEN"
+		default:
+			continue
+		}
+		p.Address, p.Port = parseNetstatAddr(fields[3])
+		if p.Port == 0 || seen[key(p)] {
+			continue
+		}
+		seen[key(p)] = true
+		ports = append(ports, p)
+	}
+	return ports
 }
 
 // parseNetstatAddr parses addresses like "*.8080", "127.0.0.1.8080", "[::1].8080"

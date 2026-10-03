@@ -137,3 +137,21 @@ func TestParseAddr(t *testing.T) {
 
 	}
 }
+
+// An unconnected UDP socket is reported as TCP_CLOSE (07); it must read as
+// OPEN like on the other platforms, or the Ports tab hides it by default.
+func TestSocketState(t *testing.T) {
+	tests := []struct{ proto, hex, want string }{
+		{"UDP", "07", "OPEN"},
+		{"UDP6", "07", "OPEN"},
+		{"UDP", "01", "ESTABLISHED"},
+		{"TCP", "07", "CLOSE"},
+		{"TCP6", "0A", "LISTEN"},
+		{"TCP", "FF", "UNKNOWN"},
+	}
+	for _, tt := range tests {
+		if got := socketState(tt.proto, tt.hex); got != tt.want {
+			t.Errorf("socketState(%q, %q) = %q, want %q", tt.proto, tt.hex, got, tt.want)
+		}
+	}
+}

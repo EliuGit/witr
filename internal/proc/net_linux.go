@@ -56,6 +56,19 @@ var stateMap = map[string]string{
 	"0B": "CLOSING",
 }
 
+// socketState names a /proc/net state. An unconnected UDP socket reports
+// TCP_CLOSE, but it is open for datagrams, which every platform calls OPEN.
+func socketState(proto, stateHex string) string {
+	state, ok := stateMap[stateHex]
+	if !ok {
+		return "UNKNOWN"
+	}
+	if state == "CLOSE" && strings.HasPrefix(proto, "UDP") {
+		return "OPEN"
+	}
+	return state
+}
+
 func readSockets() (map[string]model.Socket, error) {
 	sockets := make(map[string]model.Socket)
 
@@ -79,17 +92,12 @@ func readSockets() (map[string]model.Socket, error) {
 			stateHex := fields[3]
 			inode := fields[9]
 
-			state, ok := stateMap[stateHex]
-			if !ok {
-				state = "UNKNOWN"
-			}
-
 			addr, port := parseAddr(local, ipv6)
 			sockets[inode] = model.Socket{
 				Inode:    inode,
 				Port:     port,
 				Address:  addr,
-				State:    state,
+				State:    socketState(proto, stateHex),
 				Protocol: proto,
 			}
 		}
@@ -151,6 +159,7 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 	}
 
 	var openPorts []model.OpenPort
+	owned := make(map[string]bool)
 
 	// Scan proc
 	procs, err := os.ReadDir("/proc")
@@ -182,6 +191,7 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 			if strings.HasPrefix(link, "socket:[") {
 				inode := strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")
 				if s, ok := sockets[inode]; ok {
+					owned[inode] = true
 					openPorts = append(openPorts, model.OpenPort{
 						PID:      pid,
 						Port:     s.Port,
@@ -192,6 +202,22 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 				}
 			}
 		}
+	}
+
+	// Another user's process hides its fds from an unprivileged reader, but its
+	// sockets are still in /proc/net: list them with no owner (PID 0) rather
+	// than dropping them. Inode 0 means no process owns the socket at all
+	// (e.g. TIME_WAIT).
+	for inode, s := range sockets {
+		if inode == "0" || owned[inode] {
+			continue
+		}
+		openPorts = append(openPorts, model.OpenPort{
+			Port:     s.Port,
+			Address:  s.Address,
+			Protocol: s.Protocol,
+			State:    s.State,
+		})
 	}
 	return openPorts, nil
 }
