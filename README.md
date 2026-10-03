@@ -827,6 +827,31 @@ Non‑blocking observations such as:
 
 ---
 
+### 7.4 Using witr with AI Coding Agents
+
+AI coding agents (Claude Code, Codex, Cursor and others) regularly run into ports that are already in use, leftover dev servers and confusing containers, and work around them by chaining `lsof`, `ps`, `netstat` and `docker ps`. witr answers the same questions in one command, and two things make it easy for an agent to use:
+
+- **`--json`** prints the full result as a JSON document: the process, its ancestry chain, the source that started it and any warnings.
+- **Exit codes** say what happened without parsing any text (see [7.2 Exit Codes](#72-exit-codes)). Exit code `1` means the process was found and has warnings; it is not a failure.
+
+Add a short note like this to your project's agent instructions (`AGENTS.md`, `CLAUDE.md` or similar):
+
+```markdown
+## Process and port debugging
+
+Use `witr` instead of chaining lsof/ps/netstat/docker commands:
+
+- Port already in use: `witr --port <PORT> --json`
+- Unknown or stuck process: `witr <name> --json`, or `witr --pid <PID> --tree`
+- Container: `witr --container <name or ID> --json`
+
+Exit codes: 0 found, 1 found with warnings (not a failure), 2 not found,
+3 permission denied (retry with sudo), 4 ambiguous name or bad input
+(re-run with --pid), 5 internal error. Run `witr --help` for all options.
+```
+
+---
+
 ## 8. Platform Support
 
 - **Linux** (x86_64, arm64, loong64) - Full feature support (`/proc`).
