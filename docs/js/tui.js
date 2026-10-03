@@ -4,8 +4,9 @@
 // green/grey tabs (Processes / Ports / Containers / Locks), a status + search
 // line, a process table beside a live "Details" ancestry pane, and a footer
 // with the real key hints and version. Enter opens the Process Detail view —
-// the standard witr output beside the process's environment — where `a` opens
-// the action menu (kill / term / pause / resume / nice) exactly like the tool.
+// the standard witr output beside the process's environment. `a`, from the
+// process list or the detail view, opens the action menu (kill / term / pause /
+// resume / nice) exactly like the tool.
 
 import { ansiToHtml } from './ansi.js';
 
@@ -32,6 +33,7 @@ export class TUI {
     this.detailFocus = 'detail'; // 'detail' | 'env'
     this.actionMenuOpen = false;
     this.pendingAction = null;   // 'kill' | 'term' | 'pause' | 'resume' | 'nice'
+    this.actionTarget = null;    // process the open menu / prompt acts on
     this.statusMsg = '';
 
     this._tick = null;
@@ -65,7 +67,7 @@ export class TUI {
     document.addEventListener('keydown', this._keyHandler, true);
     this.render();
     // Match top's 3s auto-refresh cadence (relative times, live state).
-    this._tick = setInterval(() => { if (this.state === 'list') this.render(); }, 3000);
+    this._tick = setInterval(() => { if (this.state === 'list' && !this._acting()) this.render(); }, 3000);
   }
 
   close() {
@@ -111,6 +113,7 @@ export class TUI {
   _onKey(e) {
     if (!this.open) return;
     e.stopPropagation();
+    if (this._acting()) { this._onActionKey(e); return; }
     if (this.state === 'detail') { this._onDetailKey(e); return; }
 
     if (this.filtering) {
@@ -138,6 +141,9 @@ export class TUI {
         e.preventDefault(); this.sel = Math.max(0, this.sel - 1); this.render(); break;
       case 'Enter':
         e.preventDefault(); this._openDetail(rows[this.sel]); break;
+      case 'a':
+        if (this.tab === 0 && rows[this.sel]) { e.preventDefault(); this._openActions(rows[this.sel]); }
+        break;
       case '/':
         if (this.tab !== 1) { e.preventDefault(); this.filtering = true; this.render(); }
         break;
@@ -145,28 +151,44 @@ export class TUI {
     }
   }
 
-  _onDetailKey(e) {
-    const pid = this.detailPid;
+  _acting() { return this.actionMenuOpen || this.pendingAction != null; }
+
+  // The target is captured when the menu opens, so the action hits that
+  // process even if the list changes underneath.
+  _openActions(proc) {
+    if (!proc) return;
+    this.actionTarget = proc;
+    this.actionMenuOpen = true;
+    this.statusMsg = '';
+    this.render();
+  }
+
+  _closeActions() {
+    this.actionMenuOpen = false;
+    this.pendingAction = null;
+    this.actionTarget = null;
+    this.render();
+  }
+
+  // Action keys take precedence over tab, sort and quit keys in every view.
+  _onActionKey(e) {
+    e.preventDefault();
     if (this.pendingAction) {
-      if (e.key === 'y' || e.key === 'Y') {
-        e.preventDefault(); this._performAction(this.pendingAction, pid); return;
-      }
-      if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') {
-        e.preventDefault(); this.pendingAction = null; this.render(); return;
-      }
+      if (e.key === 'y' || e.key === 'Y') this._performAction(this.pendingAction, this.actionTarget.pid);
+      else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') this._closeActions();
       return;
     }
-    if (this.actionMenuOpen) {
-      const map = { k: 'kill', t: 'term', p: 'pause', r: 'resume', n: 'nice' };
-      if (map[e.key]) { e.preventDefault(); this.actionMenuOpen = false; this.pendingAction = map[e.key]; this.render(); return; }
-      if (e.key === 'Escape' || e.key === 'q') { e.preventDefault(); this.actionMenuOpen = false; this.render(); return; }
-      return;
-    }
+    const map = { k: 'kill', t: 'term', p: 'pause', r: 'resume', n: 'nice' };
+    if (map[e.key]) { this.actionMenuOpen = false; this.pendingAction = map[e.key]; this.render(); }
+    else if (e.key === 'Escape' || e.key === 'q') this._closeActions();
+  }
+
+  _onDetailKey(e) {
     switch (e.key) {
       case 'Escape': case 'q':
         e.preventDefault(); this.state = 'list'; this.detailPid = null; this.detailContainer = null; this.render(); break;
       case 'a':
-        if (this.detailPid != null) { e.preventDefault(); this.actionMenuOpen = true; this.statusMsg = ''; this.render(); }
+        if (this.detailPid != null) { e.preventDefault(); this._openActions(this.engine.procByPid.get(this.detailPid)); }
         break;
       case 'Tab':
         e.preventDefault(); this.detailFocus = this.detailFocus === 'detail' ? 'env' : 'detail'; this.render(); break;
@@ -195,6 +217,7 @@ export class TUI {
     const proc = this.engine.procByPid.get(pid);
     const name = proc ? proc.command : `pid ${pid}`;
     this.pendingAction = null;
+    this.actionTarget = null;
     if (action === 'kill' || action === 'term') {
       if (this.onKill) this.onKill(pid);
       else { this.world.processes = this.world.processes.filter((p) => p.pid !== pid); this.engine.reindex(); }
@@ -254,7 +277,8 @@ export class TUI {
         <div class="tui-status${statusClass}">${statusText}</div>
         <div class="tui-input">${inputLine}</div>
         <div class="tui-main">${main}</div>
-        <div class="tui-foot">${this._footer(rows.length)}</div>
+        ${this._acting() ? this._actionTargetHtml() : ''}
+        <div class="tui-foot ${this._acting() ? this._detailFootClass() : ''}">${this._acting() ? this._actionFooter() : this._footer(rows.length)}</div>
       </div>
       ${DISCLAIMER}`;
 
@@ -295,7 +319,7 @@ export class TUI {
       case 1: help = `Total: ${total} [LISTEN] | p/t/n/s: Sort | a: Toggle All | Esc/q: Quit | Tab: Focus | Up/Down: Scroll`; break;
       case 2: help = `Total: ${total} | Enter: Detail | i/n/r/g/s: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll`; break;
       case 3: help = `Total: ${total} [LOCKED] | Enter: Detail | a: Toggle Open Files | p/n/t/m/f: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll`; break;
-      default: help = `Total: ${total} | Enter: Detail | p/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus | Up/Down: Scroll`;
+      default: help = `Total: ${total} | Enter: Detail | a: Actions | p/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus | Up/Down: Scroll`;
     }
     return `<span class="tui-help">${escapeHtml(help)}</span><span class="tui-ver">${escapeHtml(this.version)}</span>`;
   }
@@ -475,13 +499,30 @@ export class TUI {
     return '';
   }
 
-  _detailFooter() {
-    const pid = this.detailPid;
-    if (this.actionMenuOpen) return `Esc/q: cancel | Actions:  [k]ill  [t]erm  [p]ause  [r]esume  [n]ice`;
+  _actionLabel() {
+    const t = this.actionTarget;
+    return `${escapeHtml(t.command)} (PID ${t.pid})`;
+  }
+
+  _actionFooter() {
     if (this.pendingAction) {
       const verb = { kill: 'Kill', term: 'Terminate', pause: 'Pause', resume: 'Resume', nice: 'Renice' }[this.pendingAction];
-      return `${verb} PID ${pid}? [y]es / [n]o`;
+      return `${verb} ${this._actionLabel()}? [y]es / [n]o`;
     }
+    return `Esc/q: cancel | ${this._actionLabel()} → [k]ill  [t]erm  [p]ause  [r]esume  [n]ice`;
+  }
+
+  // In the list, the highlighted row alone doesn't prove which process was
+  // picked, so the target is spelled out above the prompt.
+  _actionTargetHtml() {
+    const t = this.actionTarget;
+    const started = fmtStarted(this.engine.now() - (t.startedAgo || 0) * 1000);
+    return `<div class="tui-status tui-action-target">Target: ${this._actionLabel()} · user ${escapeHtml(t.user || '')}` +
+      ` · started ${escapeHtml(started)} · ${escapeHtml(t.cmdline || t.command)}</div>`;
+  }
+
+  _detailFooter() {
+    if (this._acting()) return this._actionFooter();
     if (this.statusMsg) return escapeHtml(this.statusMsg);
     const help = this.detailContainer
       ? 'Esc/q: Back | Up/Down: Scroll'

@@ -3,8 +3,10 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
@@ -78,6 +80,7 @@ func TestViewProcessDetailFooterStates(t *testing.T) {
 		m := sized(t, 120, 40)
 		m.state = stateDetail
 		m.selectedDetail = &model.Result{Process: model.Process{PID: 7, Command: "x"}}
+		m.actionTarget = &m.selectedDetail.Process
 		m.updateDetailViewport()
 		return m
 	}
@@ -87,10 +90,10 @@ func TestViewProcessDetailFooterStates(t *testing.T) {
 		mutate  func(*MainModel)
 		wantSub string
 	}{
-		{"action menu", func(m *MainModel) { m.actionMenuOpen = true }, "Actions"},
-		{"confirm kill", func(m *MainModel) { m.pendingAction = actionKill }, "Kill PID 7"},
-		{"confirm pause", func(m *MainModel) { m.pendingAction = actionPause }, "Pause PID 7"},
-		{"renice prompt", func(m *MainModel) { m.pendingAction = actionRenice }, "Nice value"},
+		{"action menu", func(m *MainModel) { m.actionMenuOpen = true }, "x (PID 7) → [k]ill"},
+		{"confirm kill", func(m *MainModel) { m.pendingAction = actionKill }, "Kill x (PID 7)?"},
+		{"confirm pause", func(m *MainModel) { m.pendingAction = actionPause }, "Pause x (PID 7)?"},
+		{"renice prompt", func(m *MainModel) { m.pendingAction = actionRenice }, "Nice value for x (PID 7)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,6 +103,38 @@ func TestViewProcessDetailFooterStates(t *testing.T) {
 				t.Errorf("footer for %s missing %q:\n%s", tt.name, tt.wantSub, out)
 			}
 		})
+	}
+}
+
+func TestViewListActionShowsTarget(t *testing.T) {
+	m := sized(t, 160, 40)
+	m.actionTarget = &model.Process{
+		PID: 2516, Command: "firefox", User: "alice",
+		StartedAt: time.Now().Add(-3 * time.Hour), Cmdline: "/usr/lib/firefox/firefox -contentproc",
+	}
+	m.pendingAction = actionKill
+
+	out := m.View()
+	for _, want := range []string{
+		"Target: firefox (PID 2516) · user alice · started 3 hours ago · /usr/lib/firefox/firefox -contentproc",
+		"Kill firefox (PID 2516)? [y]es / [n]o",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list view missing %q:\n%s", want, out)
+		}
+	}
+
+	// The extra line replaces the spacer, so the screen height is unchanged.
+	m.pendingAction = actionNone
+	if got, want := lipgloss.Height(out), lipgloss.Height(m.View()); got != want {
+		t.Errorf("action prompt changed view height: %d, want %d", got, want)
+	}
+}
+
+func TestActionTargetLineFitsWidth(t *testing.T) {
+	p := model.Process{PID: 1, Command: "node", User: "u", Cmdline: strings.Repeat("x", 300)}
+	if got := lipgloss.Width(actionTargetLine(p, 60)); got > 60 {
+		t.Errorf("target line width = %d, want <= 60", got)
 	}
 }
 

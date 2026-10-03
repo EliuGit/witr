@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pranshuparmar/witr/internal/output"
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func (m MainModel) View() string {
@@ -182,7 +183,11 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 		)
 	}
 
-	helpText := fmt.Sprintf("Total: %d | Enter: Detail | p/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.filtered))
+	actionsHint := ""
+	if actionsSupported {
+		actionsHint = "a: Actions | "
+	}
+	helpText := fmt.Sprintf("Total: %d | Enter: Detail | %sp/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.filtered), actionsHint)
 	switch m.activeTab {
 	case tabPorts:
 		filterStatus := "LISTEN"
@@ -215,6 +220,11 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 		if gap > 0 {
 			footerContent = helpText + strings.Repeat(" ", gap) + m.version
 		}
+	}
+	aboveFooter := spacerStyle.Render("")
+	if m.actionActive() && m.actionTarget != nil {
+		footerContent = m.actionFooter()
+		aboveFooter = actionTargetStyle.Width(m.width - 4).Render(actionTargetLine(*m.actionTarget, m.width-6))
 	}
 
 	processesTab := inactiveTabStyle.Render("1. Processes")
@@ -250,10 +260,52 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 			statusBarStyle.Render(status),
 			statusBarStyle.Render(inputView),
 			mainContent,
-			spacerStyle.Render(""),
+			aboveFooter,
 			footerStyle.Width(m.width-4).Render(footerContent),
 		),
 	)
+}
+
+// actionTargetLabel names a process in action prompts, e.g. "nginx (PID 42)".
+func actionTargetLabel(p model.Process) string {
+	return fmt.Sprintf("%s (PID %d)", output.SanitizeTerminalLine(p.Command), p.PID)
+}
+
+// actionFooter renders the open action menu, confirmation prompt or renice
+// input for the current action target.
+func (m MainModel) actionFooter() string {
+	if m.actionTarget == nil {
+		return ""
+	}
+	label := actionTargetLabel(*m.actionTarget)
+	switch m.pendingAction {
+	case actionKill:
+		return confirmStyle.Render(fmt.Sprintf("Kill %s? [y]es / [n]o", label))
+	case actionTerm:
+		return confirmStyle.Render(fmt.Sprintf("Terminate %s? [y]es / [n]o", label))
+	case actionPause:
+		return confirmStyle.Render(fmt.Sprintf("Pause %s? [y]es / [n]o", label))
+	case actionResume:
+		return confirmStyle.Render(fmt.Sprintf("Resume %s? [y]es / [n]o", label))
+	case actionRenice:
+		return confirmStyle.Render(fmt.Sprintf("Nice value for %s (−20…19): ", label)) + m.reniceInput.View()
+	}
+	return actionMenuStyle.Render(fmt.Sprintf("Esc/q: cancel | %s → [k]ill  [t]erm  [p]ause  [r]esume  [n]ice", label))
+}
+
+// actionTargetLine identifies the action target in the list view, where the
+// highlighted row alone isn't proof of which process was picked: the list
+// re-sorts as it refreshes.
+func actionTargetLine(p model.Process, width int) string {
+	started, _ := output.FormatStartedAt(p.StartedAt)
+	line := fmt.Sprintf("Target: %s · user %s · started %s",
+		actionTargetLabel(p), output.SanitizeTerminalLine(p.User), started)
+	if cmd := output.SanitizeTerminalLine(p.Cmdline); cmd != "" {
+		if room := width - lipgloss.Width(line) - 3; room >= 10 {
+			line += " · " + truncateMiddle(cmd, room)
+		}
+	}
+	return truncateMiddle(line, width)
 }
 
 func (m MainModel) viewDetailLoading(outerStyle lipgloss.Style) string {
@@ -402,23 +454,9 @@ func (m MainModel) viewProcessDetail(outerStyle lipgloss.Style) string {
 	}
 
 	var helpText string
-	pid := 0
-	if m.selectedDetail != nil {
-		pid = m.selectedDetail.Process.PID
-	}
 	switch {
-	case m.actionMenuOpen:
-		helpText = actionMenuStyle.Render("Esc/q: cancel | Actions:  [k]ill  [t]erm  [p]ause  [r]esume  [n]ice")
-	case m.pendingAction == actionKill:
-		helpText = confirmStyle.Render(fmt.Sprintf("Kill PID %d? [y]es / [n]o", pid))
-	case m.pendingAction == actionTerm:
-		helpText = confirmStyle.Render(fmt.Sprintf("Terminate PID %d? [y]es / [n]o", pid))
-	case m.pendingAction == actionPause:
-		helpText = confirmStyle.Render(fmt.Sprintf("Pause PID %d? [y]es / [n]o", pid))
-	case m.pendingAction == actionResume:
-		helpText = confirmStyle.Render(fmt.Sprintf("Resume PID %d? [y]es / [n]o", pid))
-	case m.pendingAction == actionRenice:
-		helpText = confirmStyle.Render(fmt.Sprintf("Nice value for PID %d (−20…19): ", pid)) + m.reniceInput.View()
+	case m.actionActive():
+		helpText = m.actionFooter()
 	case m.statusMsg != "":
 		helpText = errorStyle.Render(m.statusMsg)
 	default:
@@ -429,7 +467,7 @@ func (m MainModel) viewProcessDetail(outerStyle lipgloss.Style) string {
 		}
 	}
 	footerContent := helpText
-	if m.version != "" && !m.actionMenuOpen && m.pendingAction == actionNone && m.statusMsg == "" {
+	if m.version != "" && !m.actionActive() && m.statusMsg == "" {
 		gap := m.width - 6 - lipgloss.Width(helpText) - lipgloss.Width(m.version)
 		if gap > 0 {
 			footerContent = helpText + strings.Repeat(" ", gap) + m.version

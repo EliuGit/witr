@@ -282,6 +282,92 @@ func TestDetailKeyNavigation(t *testing.T) {
 	})
 }
 
+// actionModel returns a laid-out list view holding two processes.
+func actionModel(t *testing.T) MainModel {
+	t.Helper()
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.processes = []model.Process{{PID: 101, Command: "alpha"}, {PID: 202, Command: "bravo"}}
+	m.filterProcesses()
+	m.table.SetCursor(0)
+	return m
+}
+
+func TestListActionKeyOpensMenuForHighlightedProcess(t *testing.T) {
+	if !actionsSupported {
+		t.Skip("process actions are not supported on this platform")
+	}
+	m := actionModel(t)
+	m.table.SetCursor(1)
+	m, _ = step(t, m, keyRunes("a"))
+	if !m.actionMenuOpen || m.actionTarget == nil || m.actionTarget.PID != 202 {
+		t.Fatalf("a should open the menu for PID 202; open=%v target=%+v", m.actionMenuOpen, m.actionTarget)
+	}
+}
+
+func TestActionKeysTakePrecedence(t *testing.T) {
+	open := func() MainModel {
+		m := actionModel(t)
+		m.openActionMenu(m.filtered[0])
+		return m
+	}
+
+	t.Run("menu key picks the action, not a sort", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("t"))
+		if m.pendingAction != actionTerm || m.sortCol != "mem" {
+			t.Errorf("pendingAction=%v sortCol=%q, want actionTerm and unchanged sort", m.pendingAction, m.sortCol)
+		}
+	})
+
+	t.Run("tab-switch digits are ignored", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("2"))
+		if m.activeTab != tabProcesses || !m.actionMenuOpen {
+			t.Errorf("activeTab=%v menuOpen=%v, want the menu to stay open on the Processes tab", m.activeTab, m.actionMenuOpen)
+		}
+	})
+
+	t.Run("esc cancels instead of quitting", func(t *testing.T) {
+		m, _ := step(t, open(), tea.KeyMsg{Type: tea.KeyEsc})
+		if m.quitting || m.actionActive() || m.actionTarget != nil {
+			t.Errorf("quitting=%v active=%v target=%v, want the menu closed and the app running", m.quitting, m.actionActive(), m.actionTarget)
+		}
+	})
+
+	t.Run("n at the prompt declines instead of sorting", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("k"))
+		m, _ = step(t, m, keyRunes("n"))
+		if m.actionActive() || m.sortCol != "mem" {
+			t.Errorf("active=%v sortCol=%q, want the prompt declined and the sort unchanged", m.actionActive(), m.sortCol)
+		}
+	})
+
+	t.Run("renice input accepts tab-switch digits", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("n"))
+		m, _ = step(t, m, keyRunes("1"))
+		m, _ = step(t, m, keyRunes("2"))
+		if got := m.reniceInput.Value(); got != "12" || m.activeTab != tabProcesses {
+			t.Errorf("renice input = %q on tab %v, want \"12\" on the Processes tab", got, m.activeTab)
+		}
+	})
+}
+
+func TestActionOpenPausesRefreshAndMouse(t *testing.T) {
+	m := actionModel(t)
+	m.openActionMenu(m.filtered[0])
+
+	old := time.Now().Add(-time.Hour)
+	m.lastRefresh = old
+	nm, _ := m.handleTick(tickMsg(time.Now()))
+	if !nm.(MainModel).lastRefresh.Equal(old) {
+		t.Error("the list must not refresh while an action menu is open")
+	}
+
+	// A click on the "2. Ports" tab would normally switch tabs.
+	m, _ = step(t, m, tea.MouseMsg{X: 25, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if m.activeTab != tabProcesses || !m.actionMenuOpen {
+		t.Errorf("activeTab=%v menuOpen=%v, want mouse input ignored while the menu is open", m.activeTab, m.actionMenuOpen)
+	}
+}
+
 func TestWithTargetsSeedsInitialState(t *testing.T) {
 	t.Run("pid target selects that process on first list", func(t *testing.T) {
 		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPID, Value: "2"}})

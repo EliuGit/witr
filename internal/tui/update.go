@@ -61,7 +61,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m MainModel) handleTick(msg tickMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	if m.state == stateList && !m.quitting && !m.input.Focused() && !m.portInput.Focused() && !m.containerInput.Focused() && !m.lockInput.Focused() && m.refreshDue() {
+	if m.state == stateList && !m.quitting && !m.actionActive() && !m.input.Focused() && !m.portInput.Focused() && !m.containerInput.Focused() && !m.lockInput.Focused() && m.refreshDue() {
 		m.lastRefresh = time.Now()
 		m.refreshStartedAt = m.lastRefresh
 		cmd = m.refreshProcesses()
@@ -128,6 +128,11 @@ func adjustRefreshInterval(interval, took time.Duration, slow, fast int) (time.D
 }
 
 func (m MainModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// An open action menu or prompt must be answered from the keyboard; a
+	// stray click could otherwise move the selection or switch views under it.
+	if m.actionActive() {
+		return m, nil
+	}
 	m.statusMsg = "" // clear any transient error on interaction
 	if msg.Action != tea.MouseActionPress && msg.Action != tea.MouseActionMotion && msg.Action != tea.MouseActionRelease {
 		return m, nil
@@ -257,10 +262,15 @@ func (m MainModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 func (m MainModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // clear any transient error on interaction
-	switch msg.String() {
-	case "ctrl+c":
+	if msg.String() == "ctrl+c" {
 		m.quitting = true
 		return m, tea.Quit
+	}
+	// Action keys take precedence over tab, sort and quit keys in every view.
+	if m.actionActive() {
+		return m.handleActionKey(msg)
+	}
+	switch msg.String() {
 	case "1":
 		if !m.input.Focused() && !m.portInput.Focused() && !m.containerInput.Focused() {
 			m.activeTab = tabProcesses
@@ -1194,8 +1204,14 @@ func (m MainModel) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	// Toggle All Ports
+	// Process actions / Toggle All Ports / Toggle Open Files
 	case "a", "A":
+		if m.activeTab == tabProcesses && m.listFocus == focusMain {
+			if idx := m.table.Cursor(); actionsSupported && idx >= 0 && idx < len(m.filtered) {
+				m.openActionMenu(m.filtered[idx])
+			}
+			return m, nil
+		}
 		if m.activeTab == tabPorts {
 			m.showAllPorts = !m.showAllPorts
 			m.updatePortTable()
@@ -1223,107 +1239,84 @@ func (m MainModel) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleListNavKey(msg)
 }
 
-// pidIdentityChanged reports whether the live process for pid no longer matches
-// the one captured in selectedDetail — i.e. it exited and the PID was recycled.
-// It is the shared guard the destructive actions use so a signal or renice can't
-// land on an unrelated process. Returns false when there is no snapshot to
-// compare against.
-func (m MainModel) pidIdentityChanged(pid int) bool {
-	if m.selectedDetail == nil {
-		return false
-	}
-	cur, err := proc.ReadProcess(pid)
-	return err != nil || !cur.StartedAt.Equal(m.selectedDetail.Process.StartedAt)
+// actionActive reports whether the action menu, a confirmation prompt or the
+// renice input is open.
+func (m MainModel) actionActive() bool {
+	return m.actionMenuOpen || m.pendingAction != actionNone
 }
 
-func (m MainModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	pid := 0
-	if m.selectedDetail != nil {
-		pid = m.selectedDetail.Process.PID
-	}
+// openActionMenu opens the action menu for a snapshot of p.
+func (m *MainModel) openActionMenu(p model.Process) {
+	m.actionTarget = &p
+	m.actionMenuOpen = true
+}
 
-	// renice text input
-	if m.pendingAction == actionRenice {
+// closeAction dismisses the action menu, prompt and renice input.
+func (m *MainModel) closeAction() {
+	m.actionMenuOpen = false
+	m.pendingAction = actionNone
+	m.actionTarget = nil
+	m.reniceInput.SetValue("")
+	m.reniceInput.Blur()
+}
+
+// targetChanged reports whether the live process for t.PID is no longer t —
+// it exited, or the PID was reused. Identity is the PID plus its start time,
+// so a signal or renice can't land on an unrelated process.
+func targetChanged(t model.Process) bool {
+	cur, err := proc.ReadProcess(t.PID)
+	return err != nil || !cur.StartedAt.Equal(t.StartedAt)
+}
+
+func (m MainModel) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.actionTarget == nil {
+		m.closeAction()
+		return m, nil
+	}
+	t := *m.actionTarget
+
+	switch {
+	case m.pendingAction == actionRenice:
 		switch msg.String() {
 		case "esc":
-			m.pendingAction = actionNone
-			m.reniceInput.SetValue("")
-			m.reniceInput.Blur()
+			m.closeAction()
 		case "enter":
 			val, verr := validateNiceValue(m.reniceInput.Value())
 			switch {
 			case verr != nil:
 				m.statusMsg = "Invalid nice value — enter a number between −20 and 19"
-			case m.pidIdentityChanged(pid):
-				m.statusMsg = fmt.Sprintf("PID %d changed since opened — refresh and retry", pid)
+			case targetChanged(t):
+				m.statusMsg = fmt.Sprintf("PID %d changed since selected — refresh and retry", t.PID)
 			default:
-				if err := setNice(pid, val); err != nil {
+				if err := setNice(t.PID, val); err != nil {
 					m.statusMsg = fmt.Sprintf("Renice failed: %v", err)
 				} else {
-					m.statusMsg = fmt.Sprintf("PID %d reniced to %d", pid, val)
+					m.statusMsg = fmt.Sprintf("%s reniced to %d", actionTargetLabel(t), val)
 				}
 			}
-			m.pendingAction = actionNone
-			m.reniceInput.SetValue("")
-			m.reniceInput.Blur()
+			m.closeAction()
 		default:
 			var inputCmd tea.Cmd
 			m.reniceInput, inputCmd = m.reniceInput.Update(msg)
 			return m, inputCmd
 		}
 		return m, nil
-	}
 
-	// confirmation prompt
-	if m.pendingAction != actionNone {
+	case m.pendingAction != actionNone:
 		switch confirmKey(msg.String()) {
 		case confirmExecute:
-			// Re-validate the target: if the process exited and its PID
-			// was reused since the detail view opened, refuse to signal a
-			// different process. Identity is the PID plus its start time.
-			if m.pidIdentityChanged(pid) {
-				m.pendingAction = actionNone
-				m.statusMsg = fmt.Sprintf("PID %d changed since opened — refresh and retry", pid)
-				return m, nil
-			}
-			originalAction := m.pendingAction
-			var execErr error
-			switch originalAction {
-			case actionKill:
-				execErr = killProcess(pid)
-			case actionTerm:
-				execErr = termProcess(pid)
-			case actionPause:
-				execErr = pauseProcess(pid)
-			case actionResume:
-				execErr = resumeProcess(pid)
-			}
-			m.pendingAction = actionNone
-			if execErr != nil {
-				m.statusMsg = fmt.Sprintf("Error: %v", execErr)
-				return m, nil
-			}
-			switch originalAction {
-			case actionKill, actionTerm:
-				// Process is gone — go back to list
-				m.state = stateList
-				m.selectedDetail = nil
-				m.statusMsg = fmt.Sprintf("Signal sent to PID %d", pid)
-				return m, m.refreshProcesses()
-			default:
-				// Pause/Resume succeeded — stay in detail view
-				m.statusMsg = "Done"
-				return m, nil
-			}
+			return m.executeAction(t)
 		case confirmCancel:
-			m.pendingAction = actionNone
+			m.closeAction()
 		}
 		return m, nil
-	}
 
-	// action menu
-	if m.actionMenuOpen {
+	default:
 		if pending, closeMenu := actionMenuSelect(msg.String()); closeMenu {
+			if pending == actionNone {
+				m.closeAction()
+				return m, nil
+			}
 			m.actionMenuOpen = false
 			m.pendingAction = pending
 			if pending == actionRenice {
@@ -1333,25 +1326,56 @@ func (m MainModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+}
 
-	// detail view navigation
+// executeAction sends the confirmed signal to t.
+func (m MainModel) executeAction(t model.Process) (tea.Model, tea.Cmd) {
+	action := m.pendingAction
+	m.closeAction()
+	if targetChanged(t) {
+		m.statusMsg = fmt.Sprintf("PID %d changed since selected — refresh and retry", t.PID)
+		return m, nil
+	}
+
+	var err error
+	switch action {
+	case actionKill:
+		err = killProcess(t.PID)
+	case actionTerm:
+		err = termProcess(t.PID)
+	case actionPause:
+		err = pauseProcess(t.PID)
+	case actionResume:
+		err = resumeProcess(t.PID)
+	}
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("Error: %v", err)
+		return m, nil
+	}
+	m.statusMsg = fmt.Sprintf("Signal sent to %s", actionTargetLabel(t))
+	if action == actionKill || action == actionTerm {
+		// The process is gone, so leave its detail view for the list.
+		m.state = stateList
+		m.selectedDetail = nil
+		return m, m.refreshProcesses()
+	}
+	return m, nil
+}
+
+func (m MainModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "Q", "backspace":
 		m.state = stateList
 		m.selectedDetail = nil
 		m.selectedContainer = nil
 		m.detailFocus = focusDetail
-		m.actionMenuOpen = false
-		m.pendingAction = actionNone
-		m.reniceInput.SetValue("")
-		m.reniceInput.Blur()
 		if m.activeTab == tabContainers {
 			return m, m.refreshContainers()
 		}
 		return m, m.refreshProcesses()
 	case "a", "A":
 		if actionsSupported && m.selectedDetail != nil {
-			m.actionMenuOpen = true
+			m.openActionMenu(m.selectedDetail.Process)
 		}
 		return m, nil
 	case "left", "h", "H":

@@ -8,8 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/pranshuparmar/witr/internal/proc"
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func TestSetNiceRangeGuard(t *testing.T) {
@@ -116,4 +121,70 @@ func waitForState(pid int, want byte, timeout time.Duration) bool {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return false
+}
+
+// listWith returns a laid-out list view showing ps, with the cursor on the first.
+func listWith(t *testing.T, ps ...model.Process) MainModel {
+	t.Helper()
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.processes = ps
+	m.filterProcesses()
+	m.table.SetCursor(0)
+	return m
+}
+
+func readChild(t *testing.T, c *exec.Cmd) model.Process {
+	t.Helper()
+	p, err := proc.ReadProcess(c.Process.Pid)
+	if err != nil {
+		t.Skipf("cannot read child process: %v", err)
+	}
+	return p
+}
+
+func TestListActionSignalsCapturedTarget(t *testing.T) {
+	target, decoy := startSleeper(t), startSleeper(t)
+	defer func() { _ = decoy.Process.Kill() }()
+
+	m := listWith(t, readChild(t, target), readChild(t, decoy))
+	m, _ = step(t, m, keyRunes("a"))
+
+	// The rows change under the open menu, leaving the decoy under the cursor.
+	m.processes[0], m.processes[1] = m.processes[1], m.processes[0]
+	m.filterProcesses()
+
+	m, _ = step(t, m, keyRunes("k"))
+	m, _ = step(t, m, keyRunes("y"))
+
+	if !waitExit(target, 5*time.Second) {
+		t.Fatal("the process captured when the menu opened should have been killed")
+	}
+	if waitExit(decoy, 300*time.Millisecond) {
+		t.Fatal("the process that moved under the cursor must not be signalled")
+	}
+	if m.state != stateList || m.actionActive() || !strings.Contains(m.statusMsg, "Signal sent") {
+		t.Errorf("state=%v active=%v status=%q, want back on the list with a confirmation", m.state, m.actionActive(), m.statusMsg)
+	}
+}
+
+func TestListActionRefusesReusedPID(t *testing.T) {
+	c := startSleeper(t)
+	defer func() { _ = c.Process.Kill() }()
+
+	// The listed start time no longer matches, as if the PID now belongs to
+	// a newer process.
+	p := readChild(t, c)
+	p.StartedAt = p.StartedAt.Add(-time.Hour)
+
+	m := listWith(t, p)
+	for _, k := range []string{"a", "k", "y"} {
+		m, _ = step(t, m, keyRunes(k))
+	}
+
+	if waitExit(c, 300*time.Millisecond) {
+		t.Fatal("a process whose identity changed must not be signalled")
+	}
+	if !strings.Contains(m.statusMsg, "changed since selected") {
+		t.Errorf("status = %q, want a PID-changed refusal", m.statusMsg)
+	}
 }

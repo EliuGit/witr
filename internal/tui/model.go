@@ -66,6 +66,12 @@ var (
 			Foreground(colorConfirm).
 			Bold(true)
 
+	// Matches the selected table row: it names the process an action targets.
+	actionTargetStyle = lipgloss.NewStyle().
+				Foreground(colorSelectFg).
+				Background(colorSelectBg).
+				Padding(0, 1)
+
 	pidStyle = lipgloss.NewStyle().
 			Background(colorGreenBg).
 			Foreground(colorOnAccent).
@@ -203,9 +209,11 @@ type MainModel struct {
 	treeAncestry  []model.Process
 	treeTargetPID int
 
-	// Process action state
+	// Process action state. actionTarget is captured when the menu opens, so
+	// the action hits that process even if the list re-sorts underneath.
 	actionMenuOpen bool
 	pendingAction  actionKind
+	actionTarget   *model.Process
 	reniceInput    textinput.Model
 
 	// PID to select once the first process list arrives

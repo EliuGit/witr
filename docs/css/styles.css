@@ -568,6 +568,8 @@ a.brand-mark:hover { text-decoration: underline; }
 .tui-status { flex: 0 0 auto; padding-left: 1px; color: var(--t-fg); }
 .tui-status.searching { color: var(--t-accent); }
 .tui-status.err { color: var(--t-error); font-weight: 700; }
+.tui-status.tui-action-target { margin-top: 6px; padding: 0 2px; background: var(--t-selbg); color: var(--t-selfg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tui-input { flex: 0 0 auto; padding-left: 1px; margin-bottom: 8px; color: var(--t-fg); min-height: 1.5em; }
 .tui-input .tui-prompt { color: var(--t-accent); font-weight: 700; }
 .tui-caret { color: var(--t-accent); animation: tblink 1.1s step-end infinite; }
