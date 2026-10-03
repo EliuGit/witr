@@ -172,7 +172,7 @@ type appFlags struct {
 func runApp(cmd *cobra.Command, args []string) error {
 	interactiveFlag, _ := cmd.Flags().GetBool("interactive")
 	if interactiveFlag {
-		return runInteractive()
+		return runInteractive(collectTargetsInOrder(os.Args[1:], args, flagTakesValue(cmd)))
 	}
 
 	envFlag, _ := cmd.Flags().GetBool("env")
@@ -182,7 +182,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 	containerFlags, _ := cmd.Flags().GetStringSlice("container")
 
 	if !envFlag && len(pidFlags) == 0 && len(portFlags) == 0 && len(fileFlags) == 0 && len(containerFlags) == 0 && len(args) == 0 {
-		return runInteractive()
+		return runInteractive(nil)
 	}
 
 	flags := appFlags{
@@ -661,12 +661,12 @@ func renderResult(outw io.Writer, res model.Result, flags appFlags, multiMode bo
 
 func Root() *cobra.Command { return rootCmd }
 
-func runInteractive() error {
+func runInteractive(targets []model.Target) error {
 	v := version
 	if v == "v0.0.0-dev" {
 		v = ""
 	}
-	return tui.Start(v)
+	return tui.Start(v, targets)
 }
 
 func printMultiMatch(outp output.Printer, pids []int, colorEnabled bool, hint string) {

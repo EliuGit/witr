@@ -531,7 +531,7 @@ Remove-Item -Recurse -Force "$env:LocalAppData\witr"
  
 ## 3. Interactive Mode (TUI)
 
-Running `witr` without any arguments or with the `-i` flag launches the **Interactive Mode (TUI)**. This provides a real-time, terminal-based dashboard with four tabs for exploring processes, ports, containers, and file locks.
+Running `witr` without any arguments or with the `-i` flag launches the **Interactive Mode (TUI)**. This provides a real-time, terminal-based dashboard with four tabs for exploring processes, ports, containers, and file locks. Combine `-i` with a target to open the TUI already focused on it: `witr -i -p 1234` selects that PID, `witr -i nginx` pre-fills the process filter, and `witr -i -o 5432` / `-c web` / `-f /path` open the Ports / Containers / Locks tab with the filter set.
 
 ### Key Features:
 - **Processes Tab**: Live, sortable, filterable list of all running processes with a side panel showing the ancestry tree of the highlighted process.

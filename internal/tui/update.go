@@ -477,6 +477,10 @@ func (m MainModel) handleProcessList(msg []model.Process) (tea.Model, tea.Cmd) {
 	if len(selectedRow) > 0 {
 		fmt.Sscanf(selectedRow[0], "%d", &currentPID)
 	}
+	if m.initialPID > 0 {
+		currentPID = m.initialPID
+		m.initialPID = 0
+	}
 
 	m.processes = msg
 	m.sortProcesses()
