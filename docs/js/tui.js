@@ -319,7 +319,7 @@ export class TUI {
       case 1: help = `Total: ${total} [LISTEN] | p/t/n/s: Sort | a: Toggle All | Esc/q: Quit | Tab: Focus | Up/Down: Scroll`; break;
       case 2: help = `Total: ${total} | Enter: Detail | i/n/r/g/s: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll`; break;
       case 3: help = `Total: ${total} [LOCKED] | Enter: Detail | a: Toggle Open Files | p/n/t/m/f: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll`; break;
-      default: help = `Total: ${total} | Enter: Detail | a: Actions | p/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus | Up/Down: Scroll`;
+      default: help = `Total: ${total} | Enter: Detail | a: Actions | p/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus`;
     }
     return `<span class="tui-help">${escapeHtml(help)}</span><span class="tui-ver">${escapeHtml(this.version)}</span>`;
   }

@@ -188,7 +188,7 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 	if actionsSupported {
 		actionsHint = "a: Actions | "
 	}
-	helpText := fmt.Sprintf("Total: %d | Enter: Detail | %sp/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.filtered), actionsHint)
+	helpText := fmt.Sprintf("Total: %d | Enter: Detail | %sp/n/u/c/m/t: Sort | Esc/q: Quit | Tab: Focus", len(m.filtered), actionsHint)
 	switch m.activeTab {
 	case tabPorts:
 		filterStatus := "LISTEN"
