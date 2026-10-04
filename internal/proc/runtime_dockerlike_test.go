@@ -63,14 +63,16 @@ func TestApplyDockerInspect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		m := &model.ContainerMatch{}
-		applyDockerInspect(m, []byte(tt.doc))
+		d, ok := parseContainerInspect([]byte(tt.doc))
+		if !ok {
+			t.Fatalf("%s: parseContainerInspect failed", tt.name)
+		}
+		applyDockerInspect(m, d)
 		if m.RestartCount != tt.wantCount || m.RestartPolicy != tt.wantPolicy || m.StartedAt.IsZero() == tt.wantStarted {
 			t.Errorf("%s: got count=%d policy=%q started=%v", tt.name, m.RestartCount, m.RestartPolicy, m.StartedAt)
 		}
 	}
-	m := &model.ContainerMatch{RestartPolicy: "always"}
-	applyDockerInspect(m, []byte("not json"))
-	if m.RestartPolicy != "always" {
-		t.Errorf("an unreadable document changed the match: %+v", m)
+	if _, ok := parseContainerInspect([]byte("not json")); ok {
+		t.Error("an unreadable document parsed")
 	}
 }

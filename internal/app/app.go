@@ -726,15 +726,17 @@ func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer,
 		return ExitInvalidInput
 	}
 
-	if errors.Is(err, target.ErrSocketOwnerUnknown) || strings.Contains(errStr, "socket found but owning process not detected") {
-		if t.Type == model.TargetPort {
-			if portNum, convErr := strconv.Atoi(t.Value); convErr == nil {
-				if match := procpkg.ResolveContainerByPort(portNum, ""); match != nil {
-					procpkg.EnrichContainer(match)
-					return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, "")
-				}
-			}
+	ownerUnknown := errors.Is(err, target.ErrSocketOwnerUnknown) || strings.Contains(errStr, "socket found but owning process not detected")
+	// A port no visible process holds may still be published for a container:
+	// by a runtime in another namespace (Docker Desktop), or through firewall
+	// rules (rootful Podman and nerdctl, Docker without its userland proxy).
+	if t.Type == model.TargetPort && (ownerUnknown || classifyError(err) == ExitNotFound) {
+		if code, ok := portContainer(cmd, outw, outp, t, flags, multiMode, jsonResults); ok {
+			return code
 		}
+	}
+
+	if ownerUnknown {
 		const ownerUnknown = "socket found but owning process not detected (try sudo)"
 		switch {
 		case flags.json:
@@ -981,6 +983,25 @@ func analyzeContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t
 	}
 	addSocketInfo(&res, t)
 	return renderResult(outw, res, flags, multiMode, jsonResults), true
+}
+
+// portContainer explains a port target by the container that publishes it,
+// if any: its main process when that is visible here, otherwise the
+// runtime's view of the container.
+func portContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t model.Target, flags appFlags, multiMode bool, jsonResults *[]string) (int, bool) {
+	port, err := strconv.Atoi(t.Value)
+	if err != nil {
+		return 0, false
+	}
+	match := procpkg.ResolveContainerByPort(port, "")
+	if match == nil {
+		return 0, false
+	}
+	procpkg.EnrichContainer(match)
+	if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
+		return code, true
+	}
+	return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, ""), true
 }
 
 // addSocketInfo explains the socket state of a port target.

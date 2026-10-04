@@ -194,3 +194,29 @@ func TestExtractFlagValue(t *testing.T) {
 		})
 	}
 }
+
+// Published host ports are matched from the ps listing, ranges and protocol
+// included; an exposed-only port isn't published.
+func TestPublishesPort(t *testing.T) {
+	ports := "0.0.0.0:18200->80/tcp, [::]:18200->80/tcp, 127.0.0.1:8000-8002->80-82/tcp, 0.0.0.0:5353->53/udp, 9000/tcp"
+	tests := []struct {
+		port  int
+		proto string
+		want  bool
+	}{
+		{18200, "", true},
+		{18200, "tcp", true},
+		{8001, "tcp", true},
+		{8003, "tcp", false},
+		{5353, "udp", true},
+		{5353, "tcp", false},
+		{5353, "", true},
+		{9000, "tcp", false},
+		{80, "tcp", false},
+	}
+	for _, tt := range tests {
+		if got := publishesPort(ports, tt.port, tt.proto); got != tt.want {
+			t.Errorf("publishesPort(%d, %q) = %v, want %v", tt.port, tt.proto, got, tt.want)
+		}
+	}
+}

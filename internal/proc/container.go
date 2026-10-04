@@ -2,26 +2,80 @@ package proc
 
 import (
 	"context"
-	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
-// ResolveContainerByPort queries the Docker CLI for a container publishing
-// the given port over proto ("" or "tcp" for TCP). Returns nil if Docker is
-// unavailable or no container matches.
+// ResolveContainerByPort returns the container publishing host port over
+// proto ("tcp", "udp", or "" for either) from Docker, Podman or nerdctl,
+// whichever are installed, or nil. It matches the published ports itself,
+// since Podman has no publish filter, and lists the runtimes at once, since a
+// rootless runtime takes most of a second to answer.
 func ResolveContainerByPort(port int, proto string) *model.ContainerMatch {
-	filter := fmt.Sprintf("publish=%d", port)
-	if proto != "" && proto != "tcp" {
-		filter += "/" + proto
+	bins := []string{"docker", "podman", "nerdctl"}
+	found := make([]*model.ContainerMatch, len(bins))
+	var wg sync.WaitGroup
+	for i, bin := range bins {
+		if !binAvailable(bin) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, m := range dockerLikeList(bin, dockerLikeRuntimeLabels[bin]) {
+				if publishesPort(m.Ports, port, proto) {
+					found[i] = m
+					return
+				}
+			}
+		}()
 	}
-	if ms := dockerLikeList("docker", "docker", "--filter", filter); len(ms) > 0 {
-		return ms[0]
+	wg.Wait()
+	for _, m := range found {
+		if m != nil {
+			return m
+		}
 	}
 	return nil
+}
+
+// publishesPort reports whether a container's published ports, as `ps` lists
+// them ("0.0.0.0:8080->80/tcp, [::]:8000-8002->80-82/udp"), include host port
+// over proto ("" for either).
+func publishesPort(ports string, port int, proto string) bool {
+	for _, e := range strings.Split(ports, ",") {
+		host, target, ok := strings.Cut(strings.TrimSpace(e), "->")
+		if !ok {
+			continue // exposed, not published
+		}
+		p := "tcp"
+		if _, s, ok := strings.Cut(target, "/"); ok {
+			p = s
+		}
+		if proto != "" && p != proto {
+			continue
+		}
+		first, last, isRange := strings.Cut(host[strings.LastIndex(host, ":")+1:], "-")
+		lo, err := strconv.Atoi(first)
+		if err != nil {
+			continue
+		}
+		hi := lo
+		if isRange {
+			if hi, err = strconv.Atoi(last); err != nil {
+				continue
+			}
+		}
+		if port >= lo && port <= hi {
+			return true
+		}
+	}
+	return false
 }
 
 // ContainerByID returns the Docker, Podman or nerdctl container with the given
@@ -98,30 +152,14 @@ func resolveContainerName(id, runtime string) string {
 
 	ctx := context.Background()
 	switch runtime {
-	case "docker":
-		if _, err := exec.LookPath("docker"); err != nil {
-			return ""
-		}
-		cmd = exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Name}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}", "--", id)
-		prefix = "docker: "
-	case "podman":
-		if _, err := exec.LookPath("podman"); err != nil {
-			return ""
-		}
-		cmd = commandAsOriginalUser(ctx, "podman", "inspect", "--format", "{{.Name}}", "--", id)
-		prefix = "podman: "
+	case "docker", "podman", "nerdctl":
+		return dockerLikeContainerName(id, runtime)
 	case "crictl":
 		if _, err := exec.LookPath("crictl"); err != nil {
 			return ""
 		}
 		cmd = exec.CommandContext(ctx, "crictl", "inspect", id, "-o", "go-template", "--template", "{{.status.metadata.name}}")
 		prefix = "" // crictl names are usually clean
-	case "nerdctl":
-		if _, err := exec.LookPath("nerdctl"); err != nil {
-			return ""
-		}
-		cmd = commandAsOriginalUser(ctx, "nerdctl", "inspect", id, "--format", "{{.Name}}")
-		prefix = "containerd: "
 	default:
 		return ""
 	}
@@ -131,23 +169,6 @@ func resolveContainerName(id, runtime string) string {
 		return ""
 	}
 	output := strings.TrimSpace(string(out))
-
-	if runtime == "docker" {
-		parts := strings.Split(output, "|")
-		if len(parts) == 3 {
-			name := strings.TrimPrefix(parts[0], "/")
-			project := parts[1]
-			service := parts[2]
-
-			if project != "" && service != "" {
-				return "docker: " + project + "/" + service + " (" + name + ")"
-			}
-			if name != "" {
-				return "docker: " + name
-			}
-			return ""
-		}
-	}
 
 	name := strings.TrimPrefix(output, "/")
 	if name != "" {
@@ -159,6 +180,24 @@ func resolveContainerName(id, runtime string) string {
 	return ""
 }
 
+// dockerLikeContainerName labels a Docker, Podman or nerdctl container for
+// the Container line: "docker: project/service (name)" for a Compose
+// service, otherwise "<runtime>: name".
+func dockerLikeContainerName(id, runtime string) string {
+	d, ok := inspectContainer(runtime, id)
+	name := strings.TrimPrefix(d.Name, "/")
+	if !ok || name == "" {
+		return ""
+	}
+	if runtime == "docker" {
+		project, service := d.Config.Labels["com.docker.compose.project"], d.Config.Labels["com.docker.compose.service"]
+		if project != "" && service != "" {
+			return "docker: " + project + "/" + service + " (" + name + ")"
+		}
+	}
+	return map[string]string{"docker": "docker: ", "podman": "podman: ", "nerdctl": "containerd: "}[runtime] + name
+}
+
 // ContainerHealthcheckStatus reports whether the container runtime has a
 // healthcheck configured: "present", "absent", or "" when undeterminable
 // (runtime unavailable, inspect error, or unsupported runtime).
@@ -166,22 +205,14 @@ func ContainerHealthcheckStatus(id, runtime string) string {
 	if !isValidContainerID(id) || (runtime != "docker" && runtime != "podman") {
 		return ""
 	}
-	if _, err := exec.LookPath(runtime); err != nil {
+	d, ok := inspectContainer(runtime, id)
+	switch {
+	case !ok:
 		return ""
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
-	defer cancel()
-	out, err := runtimeCommand(ctx, runtime, "inspect", "--format", "{{if .Config.Healthcheck}}present{{else}}absent{{end}}", "--", id).Output()
-	if err != nil {
-		return ""
-	}
-	switch strings.TrimSpace(string(out)) {
-	case "present":
+	case len(d.Config.Healthcheck) > 0 && string(d.Config.Healthcheck) != "null":
 		return "present"
-	case "absent":
-		return "absent"
 	}
-	return ""
+	return "absent"
 }
 
 // findLongHexID searches for a 64-character hexadecimal string in the input.

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -141,14 +142,75 @@ func parseDockerTime(s string) time.Time {
 }
 
 func dockerLikeHostPID(bin, id string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
-	defer cancel()
-	out, err := runtimeCommand(ctx, bin, "inspect", "-f", "{{.State.Pid}}", id).Output()
-	if err != nil {
+	d, ok := inspectContainer(bin, id)
+	if !ok {
 		return 0
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	return pid
+	return d.State.Pid
+}
+
+// containerInspect is the part of a `<bin> inspect` document witr reads.
+// Reading the whole document rather than a template keeps a field one runtime
+// lacks from failing the rest.
+type containerInspect struct {
+	Name  string
+	State struct {
+		Pid       int
+		StartedAt string
+	}
+	RestartCount int
+	HostConfig   struct {
+		RestartPolicy struct {
+			Name              string
+			MaximumRetryCount int
+		}
+	}
+	Config struct {
+		Labels      map[string]string
+		Healthcheck json.RawMessage
+	}
+}
+
+const inspectCacheTTL = 2 * time.Second
+
+var (
+	inspectMu    sync.Mutex
+	inspectCache = map[string]cachedInspect{}
+)
+
+type cachedInspect struct {
+	doc containerInspect
+	ok  bool
+	at  time.Time
+}
+
+// inspectContainer returns a container's inspect document. One analysis asks
+// for a container's main PID, name, start time, restarts and healthcheck, and
+// each call to a rootless runtime costs most of a second, so documents are
+// kept briefly.
+func inspectContainer(bin, id string) (containerInspect, bool) {
+	key := bin + "|" + id
+	inspectMu.Lock()
+	c, hit := inspectCache[key]
+	inspectMu.Unlock()
+	if hit && time.Since(c.at) < inspectCacheTTL {
+		return c.doc, c.ok
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
+	defer cancel()
+	c = cachedInspect{at: time.Now()}
+	if out, err := runtimeCommand(ctx, bin, "inspect", "--format", "{{json .}}", id).Output(); err == nil {
+		c.doc, c.ok = parseContainerInspect(out)
+	}
+	inspectMu.Lock()
+	inspectCache[key] = c
+	inspectMu.Unlock()
+	return c.doc, c.ok
+}
+
+func parseContainerInspect(doc []byte) (containerInspect, bool) {
+	var c containerInspect
+	return c, json.Unmarshal(doc, &c) == nil
 }
 
 // dockerLikeEnrich fills in what only `<bin> inspect` reports: the actual
@@ -159,32 +221,14 @@ func dockerLikeEnrich(bin string, match *model.ContainerMatch) {
 	if match == nil || match.ID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
-	defer cancel()
-	out, err := runtimeCommand(ctx, bin, "inspect", "--format", "{{json .}}", match.ID).Output()
-	if err != nil {
-		return
+	if c, ok := inspectContainer(bin, match.ID); ok {
+		applyDockerInspect(match, c)
 	}
-	applyDockerInspect(match, out)
 }
 
 // applyDockerInspect copies the start time, restart count and restart policy
-// from a container's inspect document. Reading the whole document rather than
-// a template keeps a field one runtime lacks from failing the rest.
-func applyDockerInspect(match *model.ContainerMatch, doc []byte) {
-	var c struct {
-		State        struct{ StartedAt string }
-		RestartCount int
-		HostConfig   struct {
-			RestartPolicy struct {
-				Name              string
-				MaximumRetryCount int
-			}
-		}
-	}
-	if json.Unmarshal(doc, &c) != nil {
-		return
-	}
+// from a container's inspect document.
+func applyDockerInspect(match *model.ContainerMatch, c containerInspect) {
 	if t, err := time.Parse(time.RFC3339Nano, c.State.StartedAt); err == nil && !t.IsZero() {
 		match.StartedAt = t
 	}

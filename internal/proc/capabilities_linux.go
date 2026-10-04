@@ -103,8 +103,14 @@ var capNames = map[int]string{
 	40: "CAP_CHECKPOINT_RESTORE",
 }
 
-// ReadCapabilities reads the effective capabilities of a process from /proc/<pid>/status.
+// ReadCapabilities reads the effective capabilities of a process from
+// /proc/<pid>/status. A process in another user namespace, such as a rootless
+// container, holds them only over that namespace's resources, not the host's,
+// so none are reported for it.
 func ReadCapabilities(pid int) []string {
+	if inOtherUserNamespace(pid) {
+		return nil
+	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
 		return nil
@@ -117,6 +123,18 @@ func ReadCapabilities(pid int) []string {
 		}
 	}
 	return nil
+}
+
+// inOtherUserNamespace reports whether pid runs in a different user namespace
+// than witr. Another user's namespace link can't be read without privileges;
+// then it reports false and the capabilities stand.
+func inOtherUserNamespace(pid int) bool {
+	own, err := os.Readlink("/proc/self/ns/user")
+	if err != nil {
+		return false
+	}
+	theirs, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", pid))
+	return err == nil && theirs != own
 }
 
 // decodeCapabilities converts a hex capability bitmask into named capabilities.

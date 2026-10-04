@@ -12,7 +12,9 @@ import (
 // when the short name looks clipped.
 func deriveDisplayCommand(comm, cmdline string) string {
 	trimmedComm := strings.TrimSpace(comm)
-	exe := extractExecutableName(cmdline)
+	// Daemons that set their process title write "name: what it does"
+	// (nginx, postgres), so the first token carries a trailing colon.
+	exe := strings.TrimSuffix(extractExecutableName(cmdline), ":")
 	if trimmedComm == "" {
 		return exe
 	}

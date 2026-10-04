@@ -44,10 +44,16 @@ func TestDeriveDisplayCommand(t *testing.T) {
 			want:    "my-very-long-process-name",
 		},
 		{
-			name:    "handles nginx-style cmdline where first token has colon",
+			name:    "drops the colon of a process title",
 			comm:    "nginx",
 			cmdline: "nginx: master process /usr/sbin/nginx",
-			want:    "nginx:",
+			want:    "nginx",
+		},
+		{
+			name:    "drops the colon of a truncated process title",
+			comm:    "my-very-long-da",
+			cmdline: "my-very-long-daemon: worker process",
+			want:    "my-very-long-daemon",
 		},
 		{
 			name:    "keeps comm when it matches exe exactly",

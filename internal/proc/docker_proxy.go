@@ -24,12 +24,13 @@ func resolveDockerProxyContainer(cmdline string) string {
 	return "forwards to docker: " + c.Name + " (id " + shortID(c.ID) + ")"
 }
 
-// dockerDesktopForwarders are the processes Docker Desktop publishes container
-// ports with on Windows and macOS: its backend (older releases: vpnkit and
-// com.docker.proxy) and, on Windows, the relay that forwards a WSL2 VM's
-// ports. Each serves every published port, so only the runtime can say which
-// container a port belongs to.
-var dockerDesktopForwarders = map[string]bool{
+// portForwarders are processes that hold host ports for containers, each
+// serving every port it publishes, so only the runtime can say which
+// container a port belongs to: Docker Desktop's backend on Windows and macOS
+// (older releases: vpnkit and com.docker.proxy) and, on Windows, the relay
+// for a WSL2 VM's ports; rootless Podman's rootlessport and pasta; and
+// RootlessKit, behind rootless nerdctl and Docker's rootless mode.
+var portForwarders = map[string]bool{
 	"com.docker.backend.exe": true,
 	"com.docker.proxy.exe":   true,
 	"vpnkit.exe":             true,
@@ -37,13 +38,23 @@ var dockerDesktopForwarders = map[string]bool{
 	"com.docker.backend":     true,
 	"com.docker.vpnkit":      true,
 	"vpnkit-bridge":          true,
+	"rootlessport":           true,
+	"rootlesskit":            true,
+	"pasta":                  true,
+}
+
+// isPortForwarder reports whether a process name is one of portForwarders;
+// pasta also runs as a CPU-specific build such as pasta.avx2.
+func isPortForwarder(name string) bool {
+	name = strings.ToLower(name)
+	return portForwarders[name] || strings.HasPrefix(name, "pasta.")
 }
 
 // PublishedContainer returns the container behind port when every process in
-// pids only publishes container ports on the host (docker-proxy, or Docker
-// Desktop's forwarders), with each process's name. It returns nil when any of
-// them is an ordinary listener, or when no container publishes the port: the
-// WSL relay also forwards ports of plain WSL servers.
+// pids only publishes container ports on the host (docker-proxy, or one of
+// portForwarders), with each process's name. It returns nil when any of them
+// is an ordinary listener, or when no container publishes the port: the WSL
+// relay, for one, also forwards ports of plain WSL servers.
 func PublishedContainer(port int, pids []int) (*model.ContainerMatch, []string) {
 	if len(pids) == 0 {
 		return nil, nil
@@ -56,7 +67,7 @@ func PublishedContainer(port int, pids []int) (*model.ContainerMatch, []string) 
 			continue
 		}
 		name := imageName(pid)
-		if !dockerDesktopForwarders[strings.ToLower(name)] {
+		if !isPortForwarder(name) {
 			return nil, nil
 		}
 		names[i] = name
@@ -65,10 +76,8 @@ func PublishedContainer(port int, pids []int) (*model.ContainerMatch, []string) 
 	if proto != "" {
 		match = ResolveContainerByPort(port, proto)
 	} else {
-		// Docker Desktop's forwarders don't say which protocol they carry.
-		if match = ResolveContainerByPort(port, "tcp"); match == nil {
-			match = ResolveContainerByPort(port, "udp")
-		}
+		// Forwarders don't say which protocol they carry.
+		match = ResolveContainerByPort(port, "")
 	}
 	if match == nil {
 		return nil, nil

@@ -912,7 +912,7 @@ be traced. Run `witr --help` for all options.
 | Connections (remote end) | ✅ | ✅ | ✅ | ✅ | Connections show their remote end; connections a listener accepted are counted on its row. |
 | Bind addresses | ✅ | ✅ | ✅ | ✅ | |
 | Port → PID resolution | ✅ | ✅ | ✅ | ✅ | |
-| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy`, or by Docker Desktop's forwarders (`com.docker.backend`, plus `wslrelay` on Windows), is explained by the container's own process when it is visible, and by this view otherwise. In the TUI's Ports tab, opening such a port's owner shows the container. |
+| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy`, Docker Desktop's forwarders (`com.docker.backend`, plus `wslrelay` on Windows), rootless Podman's `rootlessport` or `pasta`, or RootlessKit (rootless nerdctl and Docker), is explained by the container's own process when it is visible, and by this view otherwise. So is a port that no process holds but a Docker, Podman or nerdctl container publishes (published through firewall rules). In the TUI's Ports tab, opening such a port's owner shows the container. |
 | **Service Detection** |
 | Service Manager | ✅ | ✅ | ✅ | ✅ | Linux: systemd, macOS: launchd, Windows: Services, FreeBSD: rc.d |
 | Service Description | ✅ | ✅ | ✅ | ✅ | Linux: `Description`, macOS: `Comment`, Windows: `Display Name`, FreeBSD: `rc` header |

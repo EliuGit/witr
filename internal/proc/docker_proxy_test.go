@@ -19,6 +19,20 @@ func TestImageNameOfSelf(t *testing.T) {
 	}
 }
 
+// Rootless runtimes publish through helpers that serve every port.
+func TestIsPortForwarder(t *testing.T) {
+	for _, name := range []string{"rootlessport", "rootlesskit", "pasta", "pasta.avx2", "wslrelay.exe", "com.docker.backend"} {
+		if !isPortForwarder(name) {
+			t.Errorf("isPortForwarder(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"nginx", "pastafarian", "python3"} {
+		if isPortForwarder(name) {
+			t.Errorf("isPortForwarder(%q) = true", name)
+		}
+	}
+}
+
 // An ordinary listener never makes a port a container's.
 func TestPublishedContainerIgnoresOrdinaryListeners(t *testing.T) {
 	if match, _ := PublishedContainer(80, []int{os.Getpid()}); match != nil {

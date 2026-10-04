@@ -18,6 +18,13 @@ func writeLabelFile(t *testing.T, path, content string) {
 	}
 }
 
+// witr's own process shares its user namespace.
+func TestInOtherUserNamespaceSelf(t *testing.T) {
+	if inOtherUserNamespace(os.Getpid()) {
+		t.Error("witr's own process reported in another user namespace")
+	}
+}
+
 // The label comes from AppArmor's own file, or from the shared file only when
 // the module is known to be active: on WSL the shared file reads "kernel".
 func TestReadSecurityLabel(t *testing.T) {
