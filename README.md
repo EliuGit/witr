@@ -786,7 +786,7 @@ Executable, PID, user, command, start time and restart count.
 A causal ancestry chain showing how the process came to exist.
 This is the core value of witr.
 
-When the process that started it has exited, the chain marks the break with `? (original parent exited)` (or `? (parent pid N exited)` when the parent's PID now belongs to an unrelated process) instead of crediting whatever adopted it.
+When the process that started it has exited, the chain marks the break with `? (original parent exited)` (or `? (parent pid N exited)` when that parent's PID no longer exists or now belongs to an unrelated process) instead of crediting whatever adopted it.
 
 #### Source
 
@@ -803,7 +803,7 @@ Examples:
 - interactive shell (detects tmux/screen sessions)
 - Snap/Flatpak sandbox (Linux)
 
-Only **one primary source** is selected. If the original parent has exited and nothing about the process itself (its container, service unit or launchd job) explains it, the source is reported as `unknown` rather than guessed.
+Only **one primary source** is selected. If the original parent has exited and nothing about the process itself (its container, service unit, login session or app scope, or launchd job) explains it, the source is reported as `unknown` rather than guessed. On systems without such a service manager it stays `init`, with a note that init only adopted it.
 
 #### Context (best effort)
 
@@ -881,7 +881,7 @@ Exit codes: 0 found, 1 found with warnings (not a failure), 2 not found,
 | Listening ports | ✅ | ✅ | ✅ | ✅ | |
 | Bind addresses | ✅ | ✅ | ✅ | ✅ | |
 | Port → PID resolution | ✅ | ✅ | ✅ | ✅ | |
-| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime, or published by Docker's `docker-proxy`. |
+| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy` is explained by the container's own process when it is visible, and by this view otherwise. |
 | **Service Detection** |
 | Service Manager | ✅ | ✅ | ✅ | ✅ | Linux: systemd, macOS: launchd, Windows: Services, FreeBSD: rc.d |
 | Service Description | ✅ | ✅ | ✅ | ✅ | Linux: `Description`, macOS: `Comment`, Windows: `Display Name`, FreeBSD: `rc` header |

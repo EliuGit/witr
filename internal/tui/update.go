@@ -784,10 +784,9 @@ func (m MainModel) handleProcessAreaMouse(msg tea.MouseMsg, contentX int, isClic
 			m.listFocus = focusSide
 			// Translate click to tree cursor position
 			// Offset: border(1) + header(1) + spacer(1) + status(1) + input(1) + table-header-border(1) + table-header(1) + tree-header(1) + tree-header-border(1) + "Ancestry Tree:" label(1) = 10
-			treeY := msg.Y - 10
-			treeY += m.treeViewport.YOffset
-			if treeY >= 0 && treeY < len(m.treePIDs) {
-				m.treeCursor = treeY
+			row := msg.Y - 10 + m.treeViewport.YOffset
+			if row >= 0 && row < len(m.treeRows) && m.treeRows[row] >= 0 {
+				m.treeCursor = m.treeRows[row]
 				m.rerenderTree()
 
 				if isDoubleClick {

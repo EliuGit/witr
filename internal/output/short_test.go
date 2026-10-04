@@ -69,6 +69,27 @@ func TestRenderChainShowsExitedParent(t *testing.T) {
 	}
 }
 
+func TestShortAndTreeJSONKeepExitedParent(t *testing.T) {
+	t.Parallel()
+
+	r := model.Result{Ancestry: []model.Process{
+		{PID: 1, Command: "systemd"},
+		{PID: 300, PPID: 1, Command: "sleep", ParentExited: true},
+	}}
+	for name, render := range map[string]func(model.Result) (string, error){"short": ToShortJSON, "tree": ToTreeJSON} {
+		out, err := render(r)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !strings.Contains(out, `"ParentExited": true`) || !strings.Contains(out, `"PPID": 1`) {
+			t.Errorf("%s JSON should mark the exited parent:\n%s", name, out)
+		}
+		if strings.Count(out, "ParentExited") != 1 {
+			t.Errorf("%s JSON should only mark the process whose parent exited:\n%s", name, out)
+		}
+	}
+}
+
 func TestRenderShortSingleProcess(t *testing.T) {
 	t.Parallel()
 

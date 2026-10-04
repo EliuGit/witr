@@ -219,7 +219,8 @@ func TestExplainsOrphan(t *testing.T) {
 	}{
 		{"container", model.Source{Type: model.SourceContainer, Name: "docker"}, targetOnly, true},
 		{"systemd service", model.Source{Type: model.SourceSystemd, Name: "cron.service"}, targetOnly, true},
-		{"login session scope", model.Source{Type: model.SourceSystemd, Name: "session-2.scope"}, targetOnly, false},
+		{"login session scope", model.Source{Type: model.SourceSystemd, Name: "session-2.scope"}, targetOnly, true},
+		{"app launch scope", model.Source{Type: model.SourceSystemd, Name: "app-gnome-firefox-4242.scope"}, targetOnly, true},
 		{"init.scope", model.Source{Type: model.SourceSystemd, Name: "init.scope"}, targetOnly, false},
 		{"user manager", model.Source{Type: model.SourceSystemd, Name: "user@1000.service"}, targetOnly, false},
 		{"launchd job", model.Source{Type: model.SourceLaunchd, Name: "com.example.agent"}, targetOnly, true},
@@ -234,6 +235,27 @@ func TestExplainsOrphan(t *testing.T) {
 		if got := explainsOrphan(tt.src, tt.below); got != tt.want {
 			t.Errorf("%s: explainsOrphan = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestForOrphan(t *testing.T) {
+	t.Parallel()
+
+	intact := []model.Process{{PID: 1}, {PID: 300, PPID: 1}}
+	orphan := []model.Process{{PID: 1}, {PID: 300, PPID: 1, ParentExited: true}}
+	initSrc := model.Source{Type: model.SourceInit, Name: "openrc-init"}
+
+	if got := forOrphan(initSrc, intact); got.Description != "" {
+		t.Errorf("an intact chain must keep its source unchanged, got %+v", got)
+	}
+	if got := forOrphan(initSrc, orphan); got.Type != model.SourceInit || got.Description != adoptedByInitDescription {
+		t.Errorf("init should stay the source but say it only adopted the process, got %+v", got)
+	}
+	if got := forOrphan(model.Source{Type: model.SourceSystemd, Name: "init.scope"}, orphan); got.Type != model.SourceUnknown {
+		t.Errorf("init.scope only adopted the process, so the source should be unknown, got %+v", got)
+	}
+	if got := forOrphan(model.Source{Type: model.SourceSystemd, Name: "session-2.scope"}, orphan); got.Name != "session-2.scope" {
+		t.Errorf("a login session scope still says where the process came from, got %+v", got)
 	}
 }
 
@@ -263,6 +285,7 @@ func TestIsContainerCgroup(t *testing.T) {
 		{"dockerd and docker-proxy", "0::/system.slice/docker.service", []string{"docker"}, false},
 		{"rootless podman container", "0::/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-" + id + ".scope", []string{"podman", "libpod"}, true},
 		{"podman API service", "0::/system.slice/podman.service", []string{"podman", "libpod"}, false},
+		{"podman conmon monitor", "0::/machine.slice/libpod-conmon-" + id + ".scope", []string{"podman", "libpod"}, false},
 		{"containerd daemon and shims", "0::/system.slice/containerd.service", []string{"containerd"}, false},
 		{"another runtime's container", "0::/system.slice/docker-" + id + ".scope", []string{"containerd"}, false},
 	}

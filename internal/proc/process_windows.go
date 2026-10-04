@@ -17,6 +17,9 @@ func ReadProcess(pid int) (model.Process, error) {
 	if pid <= 0 {
 		return model.Process{}, fmt.Errorf("invalid pid %d", pid)
 	}
+	if processExited(pid) {
+		return model.Process{}, fmt.Errorf("process %d does not exist (it has exited)", pid)
+	}
 	info, err := GetProcessDetailedInfo(pid)
 	if err != nil {
 		return model.Process{}, err

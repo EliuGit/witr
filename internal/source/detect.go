@@ -51,13 +51,31 @@ var (
 	}
 )
 
-// orphanedDescription explains an unknown source whose chain was cut where
-// the process that started the target exited.
-const orphanedDescription = "The process that started it has exited; what remains above it only adopted it"
+const (
+	// orphanedDescription explains an unknown source whose chain was cut
+	// where the process that started the target exited.
+	orphanedDescription = "The process that started it has exited; what remains above it only adopted it"
+	// adoptedByInitDescription qualifies an init source for such a chain.
+	adoptedByInitDescription = "Adopted by init after the process that started it exited"
+)
 
 func Detect(ancestry []model.Process) model.Source {
-	src := detect(ancestry)
-	if cut := parentExitedAt(ancestry); cut >= 0 && !explainsOrphan(src, ancestry[cut:]) {
+	return forOrphan(detect(ancestry), ancestry)
+}
+
+// forOrphan adjusts src when the chain was cut where the process that started
+// the target exited, so the source doesn't credit what merely adopted it.
+func forOrphan(src model.Source, ancestry []model.Process) model.Source {
+	cut := parentExitedAt(ancestry)
+	switch {
+	case cut < 0:
+		return src
+	case src.Type == model.SourceInit:
+		// Without a richer service manager, daemons are routinely adopted by
+		// init, so keep init as the source but say it only adopted the process.
+		src.Description = adoptedByInitDescription
+		return src
+	case !explainsOrphan(src, ancestry[cut:]):
 		return model.Source{Type: model.SourceUnknown, Description: orphanedDescription}
 	}
 	return src
@@ -85,9 +103,10 @@ func explainsOrphan(src model.Source, below []model.Process) bool {
 	case model.SourceContainer:
 		return true
 	case model.SourceSystemd:
-		// A .scope (login session, app launch, init.scope) or the user
-		// manager only says where the process ended up, not what started it.
-		return strings.HasSuffix(src.Name, ".service") && !strings.HasPrefix(src.Name, "user@")
+		// A service, login session or app launch scope says where the process
+		// came from. init.scope (systemd itself, and every process under
+		// WSL) and the user manager only say what adopted it.
+		return src.Name != "" && src.Name != "init.scope" && !strings.HasPrefix(src.Name, "user@")
 	case model.SourceLaunchd:
 		return src.Name != "launchd"
 	case model.SourceBsdRc:

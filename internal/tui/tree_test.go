@@ -67,6 +67,10 @@ func TestTreeShowsExitedParent(t *testing.T) {
 	if want := []int{1, 42}; !equalInts(m.treePIDs, want) {
 		t.Errorf("treePIDs = %v, want %v", m.treePIDs, want)
 	}
+	// Mouse clicks map screen rows to processes, skipping the marker row.
+	if want := []int{0, -1, 1}; !equalInts(m.treeRows, want) {
+		t.Errorf("treeRows = %v, want %v", m.treeRows, want)
+	}
 }
 
 func TestDebounceMessageFetchesSelection(t *testing.T) {

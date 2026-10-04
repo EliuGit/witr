@@ -2,6 +2,7 @@ package proc
 
 import (
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func TestResolveAncestryOrdersParentChainFromRoot(t *testing.T) {
 		200: {PID: 200, PPID: 100, Command: "worker", StartedAt: now.Add(-time.Hour)},
 	}
 
-	chain, err := resolveAncestry(200, processMapReader(processes))
+	chain, err := resolveAncestry(200, processMapReader(processes), allGone)
 	if err != nil {
 		t.Fatalf("resolveAncestry: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestResolveAncestryStopsBeforeRecycledParentPID(t *testing.T) {
 		300: {PID: 300, PPID: 200, Command: "worker", StartedAt: now.Add(-time.Hour)},
 	}
 
-	chain, err := resolveAncestry(300, processMapReader(processes))
+	chain, err := resolveAncestry(300, processMapReader(processes), allGone)
 	if err != nil {
 		t.Fatalf("resolveAncestry: %v", err)
 	}
@@ -77,12 +78,41 @@ func TestResolveAncestryMarksMissingParent(t *testing.T) {
 		300: {PID: 300, PPID: 999, Command: "worker"},
 	}
 
-	chain, err := resolveAncestry(300, processMapReader(processes))
+	chain, err := resolveAncestry(300, processMapReader(processes), allGone)
 	if err != nil {
 		t.Fatalf("resolveAncestry: %v", err)
 	}
 	if len(chain) != 1 || !chain[0].ParentExited {
 		t.Fatalf("chain = %+v, want [300] marked ParentExited", chain)
+	}
+}
+
+// allGone treats every unreadable PID as one that no longer exists.
+func allGone(int) bool { return true }
+
+func TestResolveAncestryDoesNotClaimHiddenParentExited(t *testing.T) {
+	// The parent exists but can't be read (another user's under a hidden /proc).
+	processes := map[int]model.Process{300: {PID: 300, PPID: 250, Command: "worker"}}
+
+	chain, err := resolveAncestry(300, processMapReader(processes), func(int) bool { return false })
+	if err != nil {
+		t.Fatalf("resolveAncestry: %v", err)
+	}
+	if len(chain) != 1 || chain[0].ParentExited {
+		t.Fatalf("chain = %+v, want [300] without ParentExited", chain)
+	}
+}
+
+func TestResolveAncestryWindowsSessionProcesses(t *testing.T) {
+	// Windows starts explorer.exe through userinit.exe, which always exits.
+	processes := map[int]model.Process{5228: {PID: 5228, PPID: 10024, Command: "Explorer.EXE"}}
+
+	chain, err := resolveAncestry(5228, processMapReader(processes), allGone)
+	if err != nil {
+		t.Fatalf("resolveAncestry: %v", err)
+	}
+	if want := runtime.GOOS != "windows"; chain[0].ParentExited != want {
+		t.Errorf("ParentExited = %v, want %v on %s", chain[0].ParentExited, want, runtime.GOOS)
 	}
 }
 
@@ -102,10 +132,12 @@ func TestResolveAncestryDetectsAdoption(t *testing.T) {
 			want:  true,
 		},
 		{
+			// e.g. `bash -c 'cmd &'` from a terminal that stays open: the
+			// intermediate shell exited, the terminal's shell did not.
 			name:   "launching shell still running",
 			child:  model.Process{PID: 300, PPID: 1, Session: 250, StartedAt: now.Add(-time.Hour)},
 			leader: &model.Process{PID: 250, PPID: 1, Session: 250, StartedAt: now.Add(-2 * time.Hour)},
-			want:   false,
+			want:   true,
 		},
 		{
 			name:   "session leader's PID now names a newer process",
@@ -135,7 +167,7 @@ func TestResolveAncestryDetectsAdoption(t *testing.T) {
 			processes[tt.leader.PID] = *tt.leader
 		}
 
-		chain, err := resolveAncestry(300, processMapReader(processes))
+		chain, err := resolveAncestry(300, processMapReader(processes), allGone)
 		if err != nil {
 			t.Fatalf("%s: resolveAncestry: %v", tt.name, err)
 		}
@@ -154,7 +186,7 @@ func TestResolveAncestryKeepsParentsWithUnknownStartTimes(t *testing.T) {
 		200: {PID: 200, PPID: 1, Command: "worker"},
 	}
 
-	chain, err := resolveAncestry(200, processMapReader(processes))
+	chain, err := resolveAncestry(200, processMapReader(processes), allGone)
 	if err != nil {
 		t.Fatalf("resolveAncestry: %v", err)
 	}
@@ -171,7 +203,7 @@ func TestResolveAncestryKeepsEqualStartTimes(t *testing.T) {
 		200: {PID: 200, PPID: 100, Command: "fast-child", StartedAt: startedAt},
 	}
 
-	chain, err := resolveAncestry(200, processMapReader(processes))
+	chain, err := resolveAncestry(200, processMapReader(processes), allGone)
 	if err != nil {
 		t.Fatalf("resolveAncestry: %v", err)
 	}

@@ -206,8 +206,11 @@ type MainModel struct {
 	slowStreak       int
 	fastStreak       int
 
-	// Ancestry navigation in the side panel
+	// Ancestry navigation in the side panel. treeRows maps each tree line
+	// below the label to its treePIDs index, or -1 for a line that isn't a
+	// process.
 	treePIDs      []int
+	treeRows      []int
 	treeCursor    int
 	treeResult    *model.Result
 	treeAncestry  []model.Process

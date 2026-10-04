@@ -2,15 +2,19 @@ package proc
 
 import (
 	"fmt"
+	"runtime"
+	"strings"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func ResolveAncestry(pid int) ([]model.Process, error) {
-	return resolveAncestry(pid, ReadProcess)
+	return resolveAncestry(pid, ReadProcess, processGone)
 }
 
-func resolveAncestry(pid int, readProcess func(int) (model.Process, error)) ([]model.Process, error) {
+// resolveAncestry walks from pid up through its parents. gone reports whether
+// a PID that couldn't be read no longer exists at all.
+func resolveAncestry(pid int, readProcess func(int) (model.Process, error), gone func(int) bool) ([]model.Process, error) {
 	var chain []model.Process
 	seen := make(map[int]bool)
 
@@ -24,9 +28,11 @@ func resolveAncestry(pid int, readProcess func(int) (model.Process, error)) ([]m
 
 		p, err := readProcess(current)
 		if err != nil {
-			// The parent the child recorded no longer exists.
-			if len(chain) > 0 {
-				chain[len(chain)-1].ParentExited = true
+			// The walk ends here either way, but only a parent that no longer
+			// exists means the one that started the child has exited. One that
+			// exists but can't be read (hidden /proc, another jail) does not.
+			if len(chain) > 0 && gone(current) {
+				markParentExited(&chain[len(chain)-1])
 			}
 			break
 		}
@@ -40,11 +46,11 @@ func resolveAncestry(pid int, readProcess func(int) (model.Process, error)) ([]m
 			// process onto the ancestry. Some platforms can leave start times
 			// unavailable, so only enforce the invariant when both are known.
 			if startedAfter(p, *child) {
-				child.ParentExited = true
+				markParentExited(child)
 				break
 			}
-			if adopted(*child, p, readProcess) {
-				child.ParentExited = true
+			if adopted(*child, p) {
+				markParentExited(child)
 			}
 		}
 
@@ -75,15 +81,29 @@ func startedAfter(a, b model.Process) bool {
 }
 
 // adopted reports whether child was re-parented to parent (init or a
-// subreaper) after the process that started it exited. An orphan keeps its
-// session, so the tell is a parent from another session while the child's
-// session leader, normally the shell that launched it, is gone or its PID now
-// names a newer process. A session leader's own parent is legitimately in
-// another session, so leaders are never treated as adopted.
-func adopted(child, parent model.Process, readProcess func(int) (model.Process, error)) bool {
-	if child.Session <= 0 || child.Session == child.PID || parent.Session <= 0 || parent.Session == child.Session {
-		return false
+// subreaper) after the process that started it exited. A forked process
+// inherits its parent's session, so a parent from another session means the
+// original parent is gone, unless the child started a session of its own (a
+// session leader, such as a service or a deliberately detached daemon).
+func adopted(child, parent model.Process) bool {
+	return child.Session > 0 && child.Session != child.PID &&
+		parent.Session > 0 && parent.Session != child.Session
+}
+
+// windowsSessionProcesses are started through launchers that always exit
+// (smss.exe session instances, userinit.exe), so a missing parent is normal.
+var windowsSessionProcesses = map[string]bool{
+	"wininit.exe":  true,
+	"csrss.exe":    true,
+	"winlogon.exe": true,
+	"explorer.exe": true,
+}
+
+// markParentExited records that the process that started p has exited,
+// except where the OS launches p that way by design.
+func markParentExited(p *model.Process) {
+	if runtime.GOOS == "windows" && windowsSessionProcesses[strings.ToLower(p.Command)] {
+		return
 	}
-	leader, err := readProcess(child.Session)
-	return err != nil || startedAfter(leader, child)
+	p.ParentExited = true
 }

@@ -117,9 +117,10 @@ func (m MainModel) fetchContainerDetail(match *model.ContainerMatch) tea.Cmd {
 func (m MainModel) fetchTree(p model.Process) tea.Cmd {
 	return func() tea.Msg {
 		res, err := pipeline.AnalyzePID(pipeline.AnalyzeConfig{
-			PID:     p.PID,
-			Verbose: false,
-			Tree:    true,
+			PID:                  p.PID,
+			Verbose:              false,
+			Tree:                 true,
+			SkipContainerDetails: true,
 		})
 		if err != nil {
 			return treeMsg(model.Result{
@@ -645,8 +646,10 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 
 	fmt.Fprintf(&b, "%s\n", sectionLabel.Render("Ancestry Tree:"))
 
+	var rows []int
 	if len(ancestry) == 0 {
 		fmt.Fprintf(&b, "  %s\n", dim.Render("No ancestry found"))
+		rows = append(rows, -1)
 	}
 
 	idx := 0
@@ -661,6 +664,7 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 		if gap := output.ParentGap(ancestry, i); gap != "" {
 			branch()
 			fmt.Fprintf(&b, "%s\n", dim.Render(gap))
+			rows = append(rows, -1)
 		}
 		branch()
 
@@ -671,6 +675,7 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 			label = green.Render(label)
 		}
 		fmt.Fprintf(&b, "%s\n", label)
+		rows = append(rows, idx)
 		idx++
 	}
 
@@ -683,6 +688,7 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 			if i >= limit {
 				remaining := count - limit
 				fmt.Fprintf(&b, "%s%s ... and %d more\n", baseIndent, magenta.Render("└─"), remaining)
+				rows = append(rows, -1)
 				break
 			}
 			connector := "├─"
@@ -696,9 +702,12 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 				label = highlight.Render(label)
 			}
 			fmt.Fprintf(&b, "%s%s %s\n", baseIndent, magenta.Render(connector), label)
+			rows = append(rows, idx)
 			idx++
 		}
 	}
+
+	m.treeRows = rows
 
 	if res.Process.Cmdline != "" {
 		fmt.Fprintf(&b, "\n%s\n%s\n", sectionLabel.Render("Command:"), output.SanitizeTerminalLine(res.Process.Cmdline))
