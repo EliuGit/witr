@@ -880,6 +880,13 @@ Exit codes: 0 found, 1 found with warnings (not a failure), 2 not found,
 be traced. Run `witr --help` for all options.
 ```
 
+#### Official agent skill
+
+For fuller guidance, install the official skill: it tells an agent which command fits the situation, how to read the JSON and exit codes, and to ask before stopping anything witr finds. The `witr` binary still needs to be installed.
+
+- **Claude Code:** run `/plugin marketplace add pranshuparmar/witr`, then `/plugin install witr@witr`.
+- **Other agents that read Agent Skills, or a manual install:** copy [`plugins/witr/skills/witr`](plugins/witr/skills/witr) into the agent's skills folder (for Claude Code, `~/.claude/skills/`).
+
 ---
 
 ## 8. Platform Support

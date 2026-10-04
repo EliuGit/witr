@@ -1,0 +1,19 @@
+{
+  "name": "witr",
+  "version": "0.3.4",
+  "description": "Explains why a process is running and what started it: the official skill for using the witr CLI.",
+  "author": {
+    "name": "Pranshu Parmar",
+    "url": "https://github.com/pranshuparmar"
+  },
+  "homepage": "https://github.com/pranshuparmar/witr",
+  "repository": "https://github.com/pranshuparmar/witr",
+  "license": "Apache-2.0",
+  "keywords": [
+    "process",
+    "port",
+    "debugging",
+    "containers",
+    "systemd"
+  ]
+}

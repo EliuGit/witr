@@ -18,5 +18,7 @@
 
 ## Optional
 
+- [Agent skill](https://github.com/pranshuparmar/witr/blob/main/plugins/witr/skills/witr/SKILL.md): how an AI agent should use witr: which command fits, reading the JSON and exit codes, and asking before stopping anything.
+
 - [Platform Support](https://github.com/pranshuparmar/witr#8-platform-support): feature compatibility matrix and permissions notes across OSes.
 - [License](https://github.com/pranshuparmar/witr/blob/main/LICENSE): Apache License 2.0.
