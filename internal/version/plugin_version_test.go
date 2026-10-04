@@ -11,6 +11,9 @@ import (
 // the guidance for the release they run. Bump them together.
 func TestPluginVersionMatchesRelease(t *testing.T) {
 	data, err := os.ReadFile("../../plugins/witr/.claude-plugin/plugin.json")
+	if os.IsNotExist(err) {
+		t.Skip("the plugin isn't in this source tree (packaged builds ship only the Go sources)")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

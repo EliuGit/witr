@@ -39,7 +39,7 @@
                   "/internal"
                   "/pkg"
                   "/cmd"
-                  "/doc"
+                  "/docs"
                   "/vendor"
                 ];
             };
@@ -53,7 +53,7 @@
 
             nativeBuildInputs = [ pkgs.installShellFiles ];
             postInstall = ''
-              installManPage ./doc/witr.*
+              installManPage ./docs/cli/witr.1
             '';
 
             meta = {
