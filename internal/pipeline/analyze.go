@@ -15,6 +15,12 @@ type AnalyzeConfig struct {
 	Verbose bool
 	Tree    bool
 	Target  model.Target
+	// Container, when already known, is the container the process runs in,
+	// sparing the runtime a second query.
+	Container *model.ContainerMatch
+	// SkipContainerDetails leaves out the container query for callers that
+	// don't show it, such as the TUI's frequently refreshed ancestry pane.
+	SkipContainerDetails bool
 }
 
 func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
@@ -53,9 +59,9 @@ func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
 	// Resolve the target container's details and healthcheck; the warning only
 	// fires when the runtime confirms none is configured.
 	var container *model.ContainerMatch
-	if proc.ContainerID != "" {
-		container = procpkg.ContainerByID(proc.ContainerID, proc.ContainerRuntime)
-		hc := procpkg.ContainerHealthcheckStatus(proc.ContainerID, proc.ContainerRuntime)
+	if proc.ContainerID != "" && !cfg.SkipContainerDetails {
+		var hc string
+		container, hc = procpkg.ContainerDetails(proc.ContainerID, proc.ContainerRuntime, cfg.Container)
 		proc.ContainerHealthcheck = hc
 		if len(ancestry) > 0 {
 			ancestry[len(ancestry)-1].ContainerHealthcheck = hc

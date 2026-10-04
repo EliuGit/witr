@@ -1,11 +1,11 @@
+//go:build darwin
+
 package proc
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
-
-	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func TestBuildCommand(t *testing.T) {
@@ -51,6 +51,9 @@ func TestBuildNetworks(t *testing.T) {
 			{Network: "bridge", IPv4Address: "172.17.0.2"},
 			{Network: "none"},
 		}, "bridge:172.17.0.2"},
+		{"cidr prefix dropped", []appleNetwork{
+			{Network: "default", IPv4Address: "192.168.64.3/24"},
+		}, "default:192.168.64.3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,11 +163,42 @@ func TestAppleContainerHostPID(t *testing.T) {
 	}
 }
 
-func TestAppleContainerEnrichNil(t *testing.T) {
-	// Enrich with nil or empty ID should not panic.
-	r := appleContainerRuntime{}
-	r.Enrich(nil)
-	r.Enrich(&model.ContainerMatch{ID: ""})
+func TestParseAppleContainerEntriesOlderFormat(t *testing.T) {
+	// Older releases write status as a bare string, with networks and the
+	// start date at the top level.
+	sample := `[{"configuration":{"id":"web"},"status":"running","networks":[{"network":"default","ipv4Address":"192.168.64.3/24"}],"startedDate":"2024-06-15T10:30:00Z"}]`
+	entries, err := parseAppleContainerEntries([]byte(sample))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("parseAppleContainerEntries = %d entries, %v; want 1, nil", len(entries), err)
+	}
+	e := entries[0]
+	if e.Status.State != "running" || e.StartedDate != "2024-06-15T10:30:00Z" || len(e.Networks) != 1 {
+		t.Errorf("older-format entry = %+v", e)
+	}
+}
+
+func TestParseAppleContainerEntriesSkipsUnreadable(t *testing.T) {
+	sample := `[{"configuration":{"id":"ok"}},{"configuration":5}]`
+	entries, err := parseAppleContainerEntries([]byte(sample))
+	if err != nil || len(entries) != 1 || entries[0].Configuration.ID != "ok" {
+		t.Fatalf("parseAppleContainerEntries = %+v, %v; want just the readable entry", entries, err)
+	}
+}
+
+func TestFormatPortRangeAndAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		p    applePublishedPort
+		want string
+	}{
+		{"range", applePublishedPort{HostAddress: json.RawMessage(`"0.0.0.0"`), HostPort: 8000, ContainerPort: 80, Count: 3}, "0.0.0.0:8000-8002->80-82/tcp"},
+		{"ipv6 address", applePublishedPort{HostAddress: json.RawMessage(`"::"`), HostPort: 8080, ContainerPort: 80, Count: 1}, "[::]:8080->80/tcp"},
+	}
+	for _, tt := range tests {
+		if got := formatPort(tt.p); got != tt.want {
+			t.Errorf("%s: formatPort = %q, want %q", tt.name, got, tt.want)
+		}
+	}
 }
 
 func TestParseAppleContainerInspectJSON(t *testing.T) {

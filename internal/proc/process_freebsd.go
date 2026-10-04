@@ -138,27 +138,34 @@ func ReadProcess(pid int) (model.Process, error) {
 		exeDeleted = os.IsNotExist(statErr)
 	}
 
+	var jailID, jailRuntime string
+	if jid != "" && jid != "0" {
+		jailID, jailRuntime = jid, "jail"
+	}
+
 	return model.Process{
-		PID:           pid,
-		PPID:          ppid,
-		Command:       displayName,
-		Cmdline:       cmdline,
-		StartedAt:     startedAt,
-		User:          user,
-		CPUPercent:    cpuPct,
-		MemoryRSS:     memBytes,
-		MemoryPercent: memPercent,
-		WorkingDir:    cwd,
-		GitRepo:       gitRepo,
-		GitBranch:     gitBranch,
-		Container:     container,
-		Service:       service,
-		Sockets:       procSockets,
-		Health:        health,
-		Forked:        forked,
-		Session:       sessionID(pid),
-		Env:           env,
-		ExeDeleted:    exeDeleted,
+		PID:              pid,
+		PPID:             ppid,
+		Command:          displayName,
+		Cmdline:          cmdline,
+		StartedAt:        startedAt,
+		User:             user,
+		CPUPercent:       cpuPct,
+		MemoryRSS:        memBytes,
+		MemoryPercent:    memPercent,
+		WorkingDir:       cwd,
+		GitRepo:          gitRepo,
+		GitBranch:        gitBranch,
+		Container:        container,
+		ContainerID:      jailID,
+		ContainerRuntime: jailRuntime,
+		Service:          service,
+		Sockets:          procSockets,
+		Health:           health,
+		Forked:           forked,
+		Session:          sessionID(pid),
+		Env:              env,
+		ExeDeleted:       exeDeleted,
 	}, nil
 }
 

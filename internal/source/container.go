@@ -83,7 +83,8 @@ var containerIDPattern = regexp.MustCompile("[0-9a-f]{64}")
 // its daemons and helpers (dockerd, docker-proxy, containerd-shim); only a
 // container's cgroup carries its ID.
 func isContainerCgroup(content string, markers ...string) bool {
-	if !containerIDPattern.MatchString(content) {
+	// Podman's conmon monitor sits in libpod-conmon-<id>.scope, on the host.
+	if !containerIDPattern.MatchString(content) || strings.Contains(content, "-conmon-") {
 		return false
 	}
 	for _, m := range markers {

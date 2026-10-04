@@ -54,14 +54,25 @@ func TestRenderProxiedContainer(t *testing.T) {
 	for _, want := range []string{
 		"Target      : port 3120",
 		"Compose File: /root/app/rustfs/compose.yml",
-		"Published on the host by docker-proxy (pids 5196, 5197).",
+		"Published on the host by docker-proxy (pids 5196, 5197); the container's own processes are not visible from here.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("RenderProxiedContainer output missing %q\nGot:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "not visible") {
-		t.Errorf("a proxied container's process is visible; got:\n%s", out)
+	if strings.Contains(out, "owning process is not visible") {
+		t.Errorf("the proxied view should name the proxy, not use the generic note; got:\n%s", out)
+	}
+}
+
+func TestProxiedContainerJSONNote(t *testing.T) {
+	match := &model.ContainerMatch{Runtime: "docker", ID: "c67b85f01c07", Name: "rustfs"}
+	out, err := ContainerFallbackToJSON("port 3120", match, []int{5196})
+	if err != nil {
+		t.Fatalf("ContainerFallbackToJSON: %v", err)
+	}
+	if !strings.Contains(out, "docker-proxy (pid 5196)") || strings.Contains(out, "owning process is not visible") {
+		t.Errorf("a proxied container's JSON should name the proxy:\n%s", out)
 	}
 }
 
@@ -72,6 +83,7 @@ func TestRenderStandardContainerDetails(t *testing.T) {
 		Ancestry: []model.Process{{PID: 1, Command: "systemd"}, proc},
 		Container: &model.ContainerMatch{
 			Image:             "rustfs/rustfs:latest",
+			Ports:             "0.0.0.0:3120->9000/tcp",
 			ComposeConfigFile: "/root/app/rustfs/compose.yml",
 			ComposeWorkingDir: "/root/app/rustfs",
 		},
@@ -82,6 +94,7 @@ func TestRenderStandardContainerDetails(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"Image       : rustfs/rustfs:latest",
+		"Published   : 0.0.0.0:3120->9000/tcp",
 		"Compose File: /root/app/rustfs/compose.yml",
 		"Compose Dir : /root/app/rustfs",
 	} {
@@ -226,7 +239,7 @@ func TestContainerFallbackToJSON(t *testing.T) {
 		Ports:   "127.0.0.1:5432->5432/tcp",
 	}
 
-	jsonStr, err := ContainerFallbackToJSON("port 5432", match)
+	jsonStr, err := ContainerFallbackToJSON("port 5432", match, nil)
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON() error: %v", err)
 	}
@@ -261,7 +274,7 @@ func TestContainerFallbackToJSONCompose(t *testing.T) {
 		ComposeService: "db",
 	}
 
-	jsonStr, err := ContainerFallbackToJSON("port 5432", match)
+	jsonStr, err := ContainerFallbackToJSON("port 5432", match, nil)
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON() error: %v", err)
 	}

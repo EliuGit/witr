@@ -2,23 +2,51 @@ package proc
 
 import (
 	"testing"
+
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
-func TestDockerProxyHostPort(t *testing.T) {
+func TestDockerProxyPublish(t *testing.T) {
 	tests := []struct {
-		cmdline string
-		want    int
-		wantOK  bool
+		cmdline   string
+		wantPort  int
+		wantProto string
+		wantOK    bool
 	}{
-		{"/usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 3120 -container-ip 172.29.0.2 -container-port 9000", 3120, true},
-		{"/usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port", 0, false},
-		{"/usr/bin/docker-proxy -host-port abc", 0, false},
-		{"/usr/bin/docker-proxy -container-port 9000", 0, false},
+		{"/usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 3120 -container-ip 172.29.0.2 -container-port 9000", 3120, "tcp", true},
+		{"/usr/bin/docker-proxy -proto udp -host-ip 0.0.0.0 -host-port 53 -container-ip 172.17.0.2 -container-port 53", 53, "udp", true},
+		{"/usr/bin/docker-proxy -host-ip 0.0.0.0 -host-port 8080", 8080, "tcp", true},
+		{"/usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port", 0, "tcp", false},
+		{"/usr/bin/docker-proxy -host-port abc", 0, "tcp", false},
+		{"/usr/bin/docker-proxy -container-port 9000", 0, "tcp", false},
 	}
 	for _, tt := range tests {
-		got, ok := dockerProxyHostPort(tt.cmdline)
-		if got != tt.want || ok != tt.wantOK {
-			t.Errorf("dockerProxyHostPort(%q) = %d, %v; want %d, %v", tt.cmdline, got, ok, tt.want, tt.wantOK)
+		port, proto, ok := dockerProxyPublish(tt.cmdline)
+		if port != tt.wantPort || proto != tt.wantProto || ok != tt.wantOK {
+			t.Errorf("dockerProxyPublish(%q) = %d, %q, %v; want %d, %q, %v", tt.cmdline, port, proto, ok, tt.wantPort, tt.wantProto, tt.wantOK)
+		}
+	}
+}
+
+func TestContainerDetailsHealthcheckFromKnownContainer(t *testing.T) {
+	// A known container is used as is, so none of these query a runtime.
+	tests := []struct {
+		name    string
+		runtime string
+		health  string
+		want    string
+	}{
+		{"docker with a health state", "docker", "healthy", "present"},
+		{"docker still starting", "docker", "starting", "present"},
+		{"docker without one", "docker", "", "absent"},
+		{"podman without one", "podman", "", "absent"},
+		{"runtime without healthchecks", "nerdctl", "", ""},
+	}
+	for _, tt := range tests {
+		known := &model.ContainerMatch{ID: "c67b85f01c07", Health: tt.health}
+		c, hc := ContainerDetails("c67b85f01c07", tt.runtime, known)
+		if c != known || hc != tt.want {
+			t.Errorf("%s: ContainerDetails = %p, %q; want the known container and %q", tt.name, c, hc, tt.want)
 		}
 	}
 }

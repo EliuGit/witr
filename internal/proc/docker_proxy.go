@@ -11,37 +11,43 @@ import (
 // which works on any Docker network, including the per-project networks
 // Compose creates.
 func resolveDockerProxyContainer(cmdline string) string {
-	port, ok := dockerProxyHostPort(cmdline)
+	port, proto, ok := dockerProxyPublish(cmdline)
 	if !ok {
 		return ""
 	}
-	c := ResolveContainerByPort(port)
+	c := ResolveContainerByPort(port, proto)
 	if c == nil {
 		return ""
 	}
 	return "forwards to docker: " + c.Name + " (id " + shortID(c.ID) + ")"
 }
 
-// IsDockerProxyFor reports whether pid is a docker-proxy publishing port.
-func IsDockerProxyFor(pid, port int) bool {
+// DockerProxyProto reports whether pid is a docker-proxy publishing port, and
+// over which protocol.
+func DockerProxyProto(pid, port int) (string, bool) {
 	cmdline := GetCmdline(pid)
 	fields := strings.Fields(cmdline)
 	if len(fields) == 0 || filepath.Base(fields[0]) != "docker-proxy" {
-		return false
+		return "", false
 	}
-	p, ok := dockerProxyHostPort(cmdline)
-	return ok && p == port
+	p, proto, ok := dockerProxyPublish(cmdline)
+	return proto, ok && p == port
 }
 
-// dockerProxyHostPort returns the -host-port argument of a docker-proxy
-// command line.
-func dockerProxyHostPort(cmdline string) (int, bool) {
+// dockerProxyPublish returns the -host-port and -proto arguments of a
+// docker-proxy command line; the protocol defaults to tcp.
+func dockerProxyPublish(cmdline string) (port int, proto string, ok bool) {
+	proto = "tcp"
 	parts := strings.Fields(cmdline)
-	for i, part := range parts {
-		if part == "-host-port" && i+1 < len(parts) {
-			port, err := strconv.Atoi(parts[i+1])
-			return port, err == nil && port > 0
+	for i := 0; i+1 < len(parts); i++ {
+		switch parts[i] {
+		case "-host-port":
+			if n, err := strconv.Atoi(parts[i+1]); err == nil && n > 0 {
+				port, ok = n, true
+			}
+		case "-proto":
+			proto = parts[i+1]
 		}
 	}
-	return 0, false
+	return port, proto, ok
 }

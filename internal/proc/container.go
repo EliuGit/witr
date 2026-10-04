@@ -11,9 +11,14 @@ import (
 )
 
 // ResolveContainerByPort queries the Docker CLI for a container publishing
-// the given port. Returns nil if Docker is unavailable or no container matches.
-func ResolveContainerByPort(port int) *model.ContainerMatch {
-	if ms := dockerLikeList("docker", "docker", "--filter", fmt.Sprintf("publish=%d", port)); len(ms) > 0 {
+// the given port over proto ("" or "tcp" for TCP). Returns nil if Docker is
+// unavailable or no container matches.
+func ResolveContainerByPort(port int, proto string) *model.ContainerMatch {
+	filter := fmt.Sprintf("publish=%d", port)
+	if proto != "" && proto != "tcp" {
+		filter += "/" + proto
+	}
+	if ms := dockerLikeList("docker", "docker", "--filter", filter); len(ms) > 0 {
 		return ms[0]
 	}
 	return nil
@@ -38,6 +43,26 @@ var dockerLikeRuntimeLabels = map[string]string{
 	"docker":  "docker",
 	"podman":  "podman",
 	"nerdctl": "containerd",
+}
+
+// ContainerDetails returns the container a process runs in and whether it has
+// a healthcheck: "present", "absent", or "" when that can't be told. known, if
+// set, is the container already looked up, sparing another runtime query.
+func ContainerDetails(id, runtime string, known *model.ContainerMatch) (*model.ContainerMatch, string) {
+	c := known
+	if c == nil {
+		c = ContainerByID(id, runtime)
+	}
+	switch {
+	case c == nil:
+		return nil, ContainerHealthcheckStatus(id, runtime)
+	case runtime != "docker" && runtime != "podman":
+		return c, ""
+	case c.Health != "":
+		// `ps` reports a health state exactly when a healthcheck is set.
+		return c, "present"
+	}
+	return c, "absent"
 }
 
 // isValidContainerID reports whether id is a safe container identifier to hand

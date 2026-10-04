@@ -64,7 +64,7 @@ func ReadProcess(pid int) (model.Process, error) {
 		// a container ID marks a process as inside a container.
 		switch {
 		case strings.Contains(cgroupStr, "docker"):
-			containerID = extractContainerID(cgroupStr, "docker-", "docker/")
+			containerID = fullContainerID(cgroupStr, "docker-", "docker/")
 			if containerID != "" {
 				containerRuntime = "docker"
 				if name := resolveContainerName(containerID, "docker"); name != "" {
@@ -75,7 +75,7 @@ func ReadProcess(pid int) (model.Process, error) {
 			}
 
 		case strings.Contains(cgroupStr, "podman"), strings.Contains(cgroupStr, "libpod"):
-			containerID = extractContainerID(cgroupStr, "libpod-", "libpod/")
+			containerID = fullContainerID(cgroupStr, "libpod-", "libpod/")
 			if containerID != "" {
 				containerRuntime = "podman"
 				if name := resolveContainerName(containerID, "podman"); name != "" {
@@ -124,10 +124,13 @@ func ReadProcess(pid int) (model.Process, error) {
 			}
 		case strings.Contains(cgroupStr, "lxc.payload"):
 			name := extractLXCBasedContainerName(cgroupStr)
+			containerRuntime = "lxc"
 			if name != "" {
 				container = "lxc-based: " + name
+				containerID = name
 			} else {
 				container = "lxc-based"
+				containerID = "lxc"
 			}
 		}
 	}
@@ -393,6 +396,17 @@ func containerdCgroupID(cgroup string) string {
 		return m[1]
 	}
 	return m[2]
+}
+
+// fullContainerID extracts a container ID and accepts it only when it is a
+// full 64-character hex ID. That rules out helpers in look-alike scopes, such
+// as Podman's conmon monitor (libpod-conmon-<id>.scope).
+func fullContainerID(cgroup, dashPrefix, slashPrefix string) string {
+	id := extractContainerID(cgroup, dashPrefix, slashPrefix)
+	if findLongHexID(id) != id {
+		return ""
+	}
+	return id
 }
 
 func extractLXCBasedContainerName(cgroup string) string {

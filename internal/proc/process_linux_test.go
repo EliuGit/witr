@@ -34,6 +34,26 @@ func TestProcessState(t *testing.T) {
 	}
 }
 
+func TestFullContainerID(t *testing.T) {
+	t.Parallel()
+
+	const id = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name   string
+		cgroup string
+		want   string
+	}{
+		{"podman container", "0::/machine.slice/libpod-" + id + ".scope", id},
+		{"podman's conmon monitor", "0::/machine.slice/libpod-conmon-" + id + ".scope", ""},
+		{"truncated ID", "0::/machine.slice/libpod-abc123.scope", ""},
+	}
+	for _, tt := range tests {
+		if got := fullContainerID(tt.cgroup, "libpod-", "libpod/"); got != tt.want {
+			t.Errorf("%s: fullContainerID(%q) = %q, want %q", tt.name, tt.cgroup, got, tt.want)
+		}
+	}
+}
+
 func TestContainerdCgroupID(t *testing.T) {
 	t.Parallel()
 

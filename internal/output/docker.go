@@ -91,6 +91,12 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 // RenderProxiedContainer renders the container behind a port that
 // docker-proxy publishes on the host.
 func RenderProxiedContainer(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, proxyPIDs []int) {
+	renderContainerView(w, targetLabel, match, colorEnabled, verbose, proxiedNote(proxyPIDs))
+}
+
+// proxiedNote explains a container view reached through docker-proxy: the
+// proxy is visible, the container's own processes are not.
+func proxiedNote(proxyPIDs []int) string {
 	pids := make([]string, len(proxyPIDs))
 	for i, pid := range proxyPIDs {
 		pids[i] = strconv.Itoa(pid)
@@ -99,8 +105,7 @@ func RenderProxiedContainer(w io.Writer, targetLabel string, match *model.Contai
 	if len(pids) > 1 {
 		label = "pids"
 	}
-	note := fmt.Sprintf("Published on the host by docker-proxy (%s %s).", label, strings.Join(pids, ", "))
-	renderContainerView(w, targetLabel, match, colorEnabled, verbose, note)
+	return fmt.Sprintf("Published on the host by docker-proxy (%s %s); the container's own processes are not visible from here.", label, strings.Join(pids, ", "))
 }
 
 func renderContainerView(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, note string) {
@@ -313,7 +318,9 @@ func writeContainerChainInline(out Printer, segs []string, colorEnabled bool) {
 	}
 }
 
-func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (string, error) {
+// ContainerFallbackToJSON renders the container view as JSON. proxyPIDs, when
+// set, are the docker-proxy processes that publish the target port.
+func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, proxyPIDs []int) (string, error) {
 	type containerResult struct {
 		Target            string
 		Runtime           string
@@ -369,6 +376,9 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (s
 		Source:            containerSourceLabel(match),
 		Chain:             containerChain(match),
 		Note:              "The owning process is not visible in this environment. This is common when the runtime runs in a separate namespace (e.g., Docker Desktop, WSL2 distro, macOS VM).",
+	}
+	if len(proxyPIDs) > 0 {
+		res.Note = proxiedNote(proxyPIDs)
 	}
 
 	data, err := json.MarshalIndent(res, "", "  ")

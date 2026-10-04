@@ -448,10 +448,14 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 	}
 
 	// A port Docker publishes through docker-proxy (often one proxy each for
-	// IPv4 and IPv6) is explained by the container behind it.
+	// IPv4 and IPv6) is explained by the container behind it: its main process
+	// when that is visible here, otherwise the runtime's view of it.
 	if t.Type == model.TargetPort {
 		if port, convErr := strconv.Atoi(t.Value); convErr == nil {
 			if match := dockerProxyContainer(port, pids); match != nil {
+				if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
+					return code
+				}
 				return renderContainerMatch(outw, outp, "port "+t.Value, match, flags, multiMode, jsonResults, pids)
 			}
 		}
@@ -507,14 +511,7 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 		res.ResolvedTarget = strings.TrimSuffix(systemdService, ".service")
 	}
 
-	if t.Type == model.TargetPort {
-		portNum := 0
-		fmt.Sscanf(t.Value, "%d", &portNum)
-		if portNum > 0 {
-			res.SocketInfo = procpkg.GetSocketStateForPort(portNum)
-			source.EnrichSocketInfo(res.SocketInfo)
-		}
-	}
+	addSocketInfo(&res, t)
 
 	renderResult(outw, res, flags, multiMode, jsonResults)
 
@@ -614,10 +611,10 @@ func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer,
 	if errors.Is(err, target.ErrSocketOwnerUnknown) || strings.Contains(errStr, "socket found but owning process not detected") {
 		if t.Type == model.TargetPort {
 			if portNum, convErr := strconv.Atoi(t.Value); convErr == nil {
-				if match := procpkg.ResolveContainerByPort(portNum); match != nil {
+				if match := procpkg.ResolveContainerByPort(portNum, ""); match != nil {
 					label := "port " + t.Value
 					if flags.json {
-						jsonStr, jsonErr := output.ContainerFallbackToJSON(label, match)
+						jsonStr, jsonErr := output.ContainerFallbackToJSON(label, match, nil)
 						if jsonErr != nil {
 							outp.Printf("failed to generate json output: %v\n", jsonErr)
 							return ExitInternalError
@@ -823,37 +820,61 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 
 	match := matches[0]
 	procpkg.EnrichContainer(match)
-	pid := procpkg.ResolveContainerHostPID(match.Runtime, match.ID)
-	if pid > 0 && procpkg.PIDBelongsToContainer(pid, match.ID) {
-		res, err := pipeline.AnalyzePID(pipeline.AnalyzeConfig{
-			PID:     pid,
-			Verbose: flags.verbose,
-			Tree:    flags.tree,
-			Target:  t,
-		})
-		if err != nil {
-			if flags.json {
-				jsonError(cmd, t, err.Error(), multiMode, jsonResults)
-			} else {
-				outp.Printf("Error: %v\n", err)
-			}
-			return classifyError(err)
-		}
-		res.Process.Container = output.FormatContainerLine(match)
-		if len(res.Ancestry) > 0 {
-			res.Ancestry[len(res.Ancestry)-1].Container = res.Process.Container
-		}
-		if res.Container == nil {
-			res.Container = match
-		}
-		renderResult(outw, res, flags, multiMode, jsonResults)
-		if len(res.Warnings) > 0 {
-			return ExitWarnings
-		}
-		return ExitOK
+	if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
+		return code
 	}
-
 	return renderContainerMatch(outw, outp, "container "+match.Name, match, flags, multiMode, jsonResults, nil)
+}
+
+// analyzeContainer runs the full analysis on match's main process when it is
+// visible on this host. ok is false when it isn't, so the caller can fall back
+// to the runtime's own view of the container.
+func analyzeContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t model.Target, match *model.ContainerMatch, flags appFlags, multiMode bool, jsonResults *[]string) (code int, ok bool) {
+	pid := procpkg.ResolveContainerHostPID(match.Runtime, match.ID)
+	if pid <= 0 || !procpkg.PIDBelongsToContainer(pid, match.ID) {
+		return 0, false
+	}
+	res, err := pipeline.AnalyzePID(pipeline.AnalyzeConfig{
+		PID:       pid,
+		Verbose:   flags.verbose,
+		Tree:      flags.tree,
+		Target:    t,
+		Container: match,
+	})
+	if err != nil {
+		if flags.json {
+			jsonError(cmd, t, err.Error(), multiMode, jsonResults)
+		} else {
+			outp.Printf("Error: %v\n", err)
+		}
+		return classifyError(err), true
+	}
+	res.Process.Container = output.FormatContainerLine(match)
+	if len(res.Ancestry) > 0 {
+		res.Ancestry[len(res.Ancestry)-1].Container = res.Process.Container
+	}
+	if res.Container == nil {
+		res.Container = match
+	}
+	addSocketInfo(&res, t)
+	renderResult(outw, res, flags, multiMode, jsonResults)
+	if len(res.Warnings) > 0 {
+		return ExitWarnings, true
+	}
+	return ExitOK, true
+}
+
+// addSocketInfo explains the socket state of a port target.
+func addSocketInfo(res *model.Result, t model.Target) {
+	if t.Type != model.TargetPort {
+		return
+	}
+	port := 0
+	fmt.Sscanf(t.Value, "%d", &port)
+	if port > 0 {
+		res.SocketInfo = procpkg.GetSocketStateForPort(port)
+		source.EnrichSocketInfo(res.SocketInfo)
+	}
 }
 
 // renderContainerMatch renders a container in the selected output mode.
@@ -863,7 +884,7 @@ func renderContainerMatch(outw io.Writer, outp output.Printer, label string, mat
 	colorEnabled := useColor(flags, outw)
 	switch {
 	case flags.json:
-		jsonStr, err := output.ContainerFallbackToJSON(label, match)
+		jsonStr, err := output.ContainerFallbackToJSON(label, match, proxyPIDs)
 		if err != nil {
 			outp.Printf("failed to generate json output: %v\n", err)
 			return ExitInternalError
@@ -891,12 +912,15 @@ func renderContainerMatch(outw io.Writer, outp output.Printer, label string, mat
 // are all docker-proxy processes, the plumbing Docker uses to publish a
 // container's port on the host.
 func dockerProxyContainer(port int, pids []int) *model.ContainerMatch {
+	proto := ""
 	for _, pid := range pids {
-		if !procpkg.IsDockerProxyFor(pid, port) {
+		p, ok := procpkg.DockerProxyProto(pid, port)
+		if !ok {
 			return nil
 		}
+		proto = p
 	}
-	match := procpkg.ResolveContainerByPort(port)
+	match := procpkg.ResolveContainerByPort(port, proto)
 	if match != nil {
 		procpkg.EnrichContainer(match)
 	}

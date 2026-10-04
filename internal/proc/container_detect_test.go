@@ -21,9 +21,9 @@ func TestDetectContainerFromCmdline(t *testing.T) {
 		{"/run/kubepods/besteffort/podxyz/shim", "kubernetes"},
 		{"/usr/bin/containerd-shim-runc-v2 -namespace moby", "containerd"},
 		{"podman", "podman"},
-		{"/Applications/AppleContainer.app/Contents/MacOS/com.apple.container --name myapp", "container: myapp"},
-		{"/usr/libexec/apple.container --name web", "container: web"},
-		{"apple.container run nginx", "container"},
+		{"/usr/local/libexec/container/plugins/container-runtime-linux/bin/container-runtime-linux start --root /Users/me/Library/Application Support/com.apple.container/containers/web --uuid web", "container: web"},
+		{"container-runtime-linux start --root /srv/apple/containers/db --uuid db", "container: db"},
+		{"/usr/local/bin/container-apiserver start", ""},
 	}
 	for _, tt := range tests {
 		if got := detectContainerFromCmdline(tt.cmdline); got != tt.want {
