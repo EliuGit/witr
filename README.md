@@ -572,7 +572,7 @@ All target flags (`--pid`, `--port`, `--file`, `--container`) are repeatable and
 
 The `--container` flag searches across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails, and matches against container name, image, command, and compose project/service labels, or a container ID (full, short, or a prefix of at least 4 characters).
 
-The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used.
+The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used. It needs a terminal: run without one (from a script, a pipe or CI) and witr exits with code 4 and asks for a target instead.
 
 ---
 
@@ -886,7 +886,7 @@ be traced. Run `witr --help` for all options.
 | Listening ports | ✅ | ✅ | ✅ | ✅ | |
 | Bind addresses | ✅ | ✅ | ✅ | ✅ | |
 | Port → PID resolution | ✅ | ✅ | ✅ | ✅ | |
-| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy` is explained by the container's own process when it is visible, and by this view otherwise. |
+| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy`, or by Docker Desktop's forwarders (`com.docker.backend`, plus `wslrelay` on Windows), is explained by the container's own process when it is visible, and by this view otherwise. In the TUI's Ports tab, opening such a port's owner shows the container. |
 | **Service Detection** |
 | Service Manager | ✅ | ✅ | ✅ | ✅ | Linux: systemd, macOS: launchd, Windows: Services, FreeBSD: rc.d |
 | Service Description | ✅ | ✅ | ✅ | ✅ | Linux: `Description`, macOS: `Comment`, Windows: `Display Name`, FreeBSD: `rc` header |

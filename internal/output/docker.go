@@ -87,24 +87,40 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 	renderContainerView(w, targetLabel, match, colorEnabled, verbose, "The owning process is not visible in this environment.")
 }
 
-// RenderProxiedContainer renders the container behind a port that
-// docker-proxy publishes on the host.
-func RenderProxiedContainer(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, proxyPIDs []int) {
-	renderContainerView(w, targetLabel, match, colorEnabled, verbose, proxiedNote(proxyPIDs))
+// RenderProxiedContainer renders the container behind a port that host
+// processes publish for it, with note (from PublishedNote) naming them.
+func RenderProxiedContainer(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, note string) {
+	renderContainerView(w, targetLabel, match, colorEnabled, verbose, note)
 }
 
-// proxiedNote explains a container view reached through docker-proxy: the
-// proxy is visible, the container's own processes are not.
-func proxiedNote(proxyPIDs []int) string {
-	pids := make([]string, len(proxyPIDs))
-	for i, pid := range proxyPIDs {
-		pids[i] = strconv.Itoa(pid)
+// PublishedNote explains a container view reached through the host processes
+// that publish its port (docker-proxy, Docker Desktop): they are visible, the
+// container's own processes are not. names[i] is the name of pids[i].
+func PublishedNote(names []string, pids []int) string {
+	type group struct {
+		name string
+		pids []string
 	}
-	label := "pid"
-	if len(pids) > 1 {
-		label = "pids"
+	var groups []*group
+	byName := map[string]*group{}
+	for i, pid := range pids {
+		g := byName[names[i]]
+		if g == nil {
+			g = &group{name: names[i]}
+			byName[names[i]] = g
+			groups = append(groups, g)
+		}
+		g.pids = append(g.pids, strconv.Itoa(pid))
 	}
-	return fmt.Sprintf("Published on the host by docker-proxy (%s %s); the container's own processes are not visible from here.", label, strings.Join(pids, ", "))
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		label := "pid"
+		if len(g.pids) > 1 {
+			label = "pids"
+		}
+		parts[i] = fmt.Sprintf("%s (%s %s)", SanitizeTerminalLine(g.name), label, strings.Join(g.pids, ", "))
+	}
+	return fmt.Sprintf("Published on the host by %s; the container's own processes are not visible from here.", strings.Join(parts, ", "))
 }
 
 func renderContainerView(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, note string) {
@@ -317,9 +333,9 @@ func writeContainerChainInline(out Printer, segs []string, colorEnabled bool) {
 	}
 }
 
-// ContainerFallbackToJSON renders the container view as JSON. proxyPIDs, when
+// ContainerFallbackToJSON renders the container view as JSON. note, when
 // set, are the docker-proxy processes that publish the target port.
-func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, proxyPIDs []int) (string, error) {
+func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, note string) (string, error) {
 	type containerResult struct {
 		Target            string
 		Runtime           string
@@ -346,11 +362,11 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, pr
 
 	created := ""
 	if !match.CreatedAt.IsZero() {
-		created = match.CreatedAt.Format("Mon 2006-01-02 15:04:05 -07:00")
+		created = match.CreatedAt.Local().Format("Mon 2006-01-02 15:04:05 -07:00")
 	}
 	started := ""
 	if !match.StartedAt.IsZero() {
-		started = match.StartedAt.Format("Mon 2006-01-02 15:04:05 -07:00")
+		started = match.StartedAt.Local().Format("Mon 2006-01-02 15:04:05 -07:00")
 	}
 
 	res := containerResult{
@@ -376,8 +392,8 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, pr
 		Chain:             containerChain(match),
 		Note:              "The owning process is not visible in this environment. This is common when the runtime runs in a separate namespace (e.g., Docker Desktop, WSL2 distro, macOS VM).",
 	}
-	if len(proxyPIDs) > 0 {
-		res.Note = proxiedNote(proxyPIDs)
+	if note != "" {
+		res.Note = note
 	}
 
 	return MarshalJSON(res)

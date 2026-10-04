@@ -48,7 +48,7 @@ func TestRenderProxiedContainer(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	RenderProxiedContainer(&buf, "port 3120", match, false, false, []int{5196, 5197})
+	RenderProxiedContainer(&buf, "port 3120", match, false, false, PublishedNote([]string{"docker-proxy", "docker-proxy"}, []int{5196, 5197}))
 	out := buf.String()
 
 	for _, want := range []string{
@@ -65,9 +65,19 @@ func TestRenderProxiedContainer(t *testing.T) {
 	}
 }
 
+// Docker Desktop publishes through its backend and, on Windows, the WSL
+// relay; the note names each.
+func TestPublishedNoteGroupsByProcess(t *testing.T) {
+	got := PublishedNote([]string{"com.docker.backend.exe", "wslrelay.exe"}, []int{17276, 19984})
+	want := "Published on the host by com.docker.backend.exe (pid 17276), wslrelay.exe (pid 19984); the container's own processes are not visible from here."
+	if got != want {
+		t.Errorf("PublishedNote = %q\nwant %q", got, want)
+	}
+}
+
 func TestProxiedContainerJSONNote(t *testing.T) {
 	match := &model.ContainerMatch{Runtime: "docker", ID: "c67b85f01c07", Name: "rustfs"}
-	out, err := ContainerFallbackToJSON("port 3120", match, []int{5196})
+	out, err := ContainerFallbackToJSON("port 3120", match, PublishedNote([]string{"docker-proxy"}, []int{5196}))
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON: %v", err)
 	}
@@ -239,7 +249,7 @@ func TestContainerFallbackToJSON(t *testing.T) {
 		Ports:   "127.0.0.1:5432->5432/tcp",
 	}
 
-	jsonStr, err := ContainerFallbackToJSON("port 5432", match, nil)
+	jsonStr, err := ContainerFallbackToJSON("port 5432", match, "")
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON() error: %v", err)
 	}
@@ -274,7 +284,7 @@ func TestContainerFallbackToJSONCompose(t *testing.T) {
 		ComposeService: "db",
 	}
 
-	jsonStr, err := ContainerFallbackToJSON("port 5432", match, nil)
+	jsonStr, err := ContainerFallbackToJSON("port 5432", match, "")
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON() error: %v", err)
 	}

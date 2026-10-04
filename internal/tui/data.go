@@ -131,6 +131,27 @@ func (m MainModel) fetchTree(p model.Process) tea.Cmd {
 	}
 }
 
+// fetchPortOwnerDetail opens what explains a port's owner: the container
+// whose port it publishes (docker-proxy, Docker Desktop), as --port does, or
+// else the process itself.
+func (m MainModel) fetchPortOwnerDetail(pid, port int) tea.Cmd {
+	return func() tea.Msg {
+		if match, _ := proc.PublishedContainer(port, []int{pid}); match != nil {
+			return m.fetchContainerDetail(match)()
+		}
+		return m.fetchProcessDetail(pid)()
+	}
+}
+
+// selectedPortNumber returns the port of the selected Ports-tab row, or 0.
+func (m MainModel) selectedPortNumber() int {
+	port := 0
+	if row := m.portTable.SelectedRow(); len(row) > 0 {
+		fmt.Sscanf(row[0], "%d", &port)
+	}
+	return port
+}
+
 func (m MainModel) fetchProcessDetail(pid int) tea.Cmd {
 	return func() tea.Msg {
 		res, err := pipeline.AnalyzePID(pipeline.AnalyzeConfig{
@@ -878,6 +899,18 @@ func (m *MainModel) updateContainerTable() {
 	}
 	m.containerTable.SetRows(rows)
 	m.filteredContainers = filtered
+}
+
+// centerCursor selects row i and scrolls it toward the middle of the table.
+// SetCursor alone keeps the scroll offset, which leaves a row more than a
+// screen down just out of view; moving past the row and stepping back
+// scrolls the table the way the arrow keys do.
+func centerCursor(t *table.Model, i int) {
+	t.GotoTop()
+	t.MoveDown(min(i+t.Height()/2, len(t.Rows())-1))
+	for t.Cursor() > i {
+		t.MoveUp(1)
+	}
 }
 
 func truncate(s string, n int) string {

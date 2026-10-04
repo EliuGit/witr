@@ -71,6 +71,17 @@ func detectShell(ancestry []model.Process) *model.Source {
 			return src
 		}
 
+		// A command run directly in a tmux or screen window, with no shell in
+		// between, was started by the multiplexer.
+		if name := multiplexer(base); name != "" {
+			src := &model.Source{
+				Type: model.SourceShell,
+				Name: name,
+			}
+			enrichMultiplexer(src, ancestry)
+			return src
+		}
+
 		// Normalize for Windows by stripping common executable extensions for the map lookup
 		lookupName := base
 		lowerBase := strings.ToLower(base)
@@ -103,13 +114,26 @@ func detectShell(ancestry []model.Process) *model.Source {
 	return nil
 }
 
+// multiplexer returns "tmux" or "screen" when base is that multiplexer's
+// process name (the tmux server shows as "tmux: server"), or "".
+func multiplexer(base string) string {
+	switch {
+	case base == "tmux" || strings.HasPrefix(base, "tmux:"):
+		return "tmux"
+	case base == "screen" || strings.HasPrefix(base, "SCREEN"):
+		return "screen"
+	}
+	return ""
+}
+
 // enrichMultiplexer checks if tmux or screen is in the ancestry and adds
 // session details to the source description.
 func enrichMultiplexer(src *model.Source, ancestry []model.Process) {
 	for i := 0; i < len(ancestry)-1; i++ {
 		base := filepath.Base(ancestry[i].Command)
 
-		if base == "tmux" || strings.HasPrefix(base, "tmux:") {
+		switch multiplexer(base) {
+		case "tmux":
 			session := findEnvVar(ancestry, "TMUX")
 			desc := "tmux session"
 			if session != "" {
@@ -124,9 +148,7 @@ func enrichMultiplexer(src *model.Source, ancestry []model.Process) {
 			}
 			src.Description = desc
 			return
-		}
-
-		if base == "screen" || strings.HasPrefix(base, "SCREEN") {
+		case "screen":
 			session := findEnvVar(ancestry, "STY")
 			desc := "screen session"
 			if session != "" {

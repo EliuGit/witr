@@ -27,6 +27,21 @@ func TestDetectShellWindowsCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestDetectShellMultiplexerWithoutShell(t *testing.T) {
+	// `tmux new -d cmd` runs cmd straight from the tmux server.
+	for _, server := range []string{"tmux: server", "tmux", "SCREEN"} {
+		ancestry := []model.Process{
+			{PID: 1, Command: "systemd"},
+			{PID: 50, PPID: 1, Command: server},
+			{PID: 60, PPID: 50, Command: "job"},
+		}
+		src := Detect(ancestry)
+		if src.Type != model.SourceShell || (src.Name != "tmux" && src.Name != "screen") || !strings.Contains(src.Description, "session") {
+			t.Errorf("Detect under %q = %+v; want the multiplexer as a shell source", server, src)
+		}
+	}
+}
+
 func TestDetectWindowsSystemKernel(t *testing.T) {
 	// A process rooted at the Windows System process (PID 4) is a kernel/system
 	// process, not an unsupervised one. It must resolve to an init source and

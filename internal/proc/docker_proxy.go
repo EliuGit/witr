@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 // resolveDockerProxyContainer describes the container a docker-proxy process
@@ -20,6 +22,58 @@ func resolveDockerProxyContainer(cmdline string) string {
 		return ""
 	}
 	return "forwards to docker: " + c.Name + " (id " + shortID(c.ID) + ")"
+}
+
+// dockerDesktopForwarders are the processes Docker Desktop publishes container
+// ports with on Windows and macOS: its backend (older releases: vpnkit and
+// com.docker.proxy) and, on Windows, the relay that forwards a WSL2 VM's
+// ports. Each serves every published port, so only the runtime can say which
+// container a port belongs to.
+var dockerDesktopForwarders = map[string]bool{
+	"com.docker.backend.exe": true,
+	"com.docker.proxy.exe":   true,
+	"vpnkit.exe":             true,
+	"wslrelay.exe":           true,
+	"com.docker.backend":     true,
+	"com.docker.vpnkit":      true,
+	"vpnkit-bridge":          true,
+}
+
+// PublishedContainer returns the container behind port when every process in
+// pids only publishes container ports on the host (docker-proxy, or Docker
+// Desktop's forwarders), with each process's name. It returns nil when any of
+// them is an ordinary listener, or when no container publishes the port: the
+// WSL relay also forwards ports of plain WSL servers.
+func PublishedContainer(port int, pids []int) (*model.ContainerMatch, []string) {
+	if len(pids) == 0 {
+		return nil, nil
+	}
+	names := make([]string, len(pids))
+	proto := ""
+	for i, pid := range pids {
+		if p, ok := DockerProxyProto(pid, port); ok {
+			names[i], proto = "docker-proxy", p
+			continue
+		}
+		name := imageName(pid)
+		if !dockerDesktopForwarders[strings.ToLower(name)] {
+			return nil, nil
+		}
+		names[i] = name
+	}
+	var match *model.ContainerMatch
+	if proto != "" {
+		match = ResolveContainerByPort(port, proto)
+	} else {
+		// Docker Desktop's forwarders don't say which protocol they carry.
+		if match = ResolveContainerByPort(port, "tcp"); match == nil {
+			match = ResolveContainerByPort(port, "udp")
+		}
+	}
+	if match == nil {
+		return nil, nil
+	}
+	return match, names
 }
 
 // DockerProxyProto reports whether pid is a docker-proxy publishing port, and

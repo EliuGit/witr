@@ -10,6 +10,15 @@ import (
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
+// imageName returns the executable name of pid, or "".
+func imageName(pid int) string {
+	_, exe, err := getInfoFromSnapshot(pid)
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(exe)
+}
+
 func ReadProcess(pid int) (model.Process, error) {
 	// PID 0 is the System Idle Process on Windows (and negative PIDs are never
 	// valid), so reject them rather than returning the idle pseudo-process —

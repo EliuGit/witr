@@ -30,6 +30,7 @@ func FormatStartedAt(t time.Time) (rel, absolute string) {
 			rel = "just now"
 		}
 	}
-	absolute = t.Format("Mon 2006-01-02 15:04:05 -07:00")
+	// Runtimes report times in UTC; show every time in local time.
+	absolute = t.Local().Format("Mon 2006-01-02 15:04:05 -07:00")
 	return rel, absolute
 }

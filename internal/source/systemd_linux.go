@@ -79,7 +79,10 @@ func enrichFromSystemd(src *model.Source, unitName string) {
 	defer conn.Close()
 
 	if unit, err := conn.GetUnitPropertiesContext(ctx, unitName); err == nil {
-		src.Description = stringProp(unit, "Description")
+		// A unit without a description reports its own name; skip that.
+		if desc := stringProp(unit, "Description"); desc != unitName {
+			src.Description = desc
+		}
 		if fp := stringProp(unit, "FragmentPath"); fp != "" {
 			src.UnitFile = fp
 		} else if sp := stringProp(unit, "SourcePath"); sp != "" {

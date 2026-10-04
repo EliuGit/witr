@@ -147,7 +147,9 @@ func Execute() {
 	if errors.As(err, &ece) {
 		os.Exit(ece.code)
 	}
-	os.Exit(1)
+	// Errors without a code come from cobra's own parsing: an unknown flag, a
+	// flag missing its value, a bad argument.
+	os.Exit(ExitInvalidInput)
 }
 
 func init() {
@@ -566,16 +568,18 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 		return handleResolveError(cmd, outw, outp, t, err, flags, multiMode, jsonResults)
 	}
 
-	// A port Docker publishes through docker-proxy (often one proxy each for
-	// IPv4 and IPv6) is explained by the container behind it: its main process
-	// when that is visible here, otherwise the runtime's view of it.
+	// A port published for a container, through docker-proxy (often one each
+	// for IPv4 and IPv6) or Docker Desktop's forwarders, is explained by the
+	// container behind it: its main process when that is visible here,
+	// otherwise the runtime's view of it.
 	if t.Type == model.TargetPort {
 		if port, convErr := strconv.Atoi(t.Value); convErr == nil {
-			if match := dockerProxyContainer(port, pids); match != nil {
+			if match, names := procpkg.PublishedContainer(port, pids); match != nil {
+				procpkg.EnrichContainer(match)
 				if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
 					return code
 				}
-				return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, pids)
+				return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, output.PublishedNote(names, pids))
 			}
 		}
 	}
@@ -618,8 +622,7 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 		case multiMode:
 			outp.Printf("Error: %v\n", err)
 		default:
-			errorMsg := fmt.Sprintf("%s\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help", err.Error())
-			cmd.PrintErrln(errorMsg)
+			cmd.PrintErrln(errorWithHint(err))
 		}
 		return classifyError(err)
 	}
@@ -727,7 +730,8 @@ func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer,
 		if t.Type == model.TargetPort {
 			if portNum, convErr := strconv.Atoi(t.Value); convErr == nil {
 				if match := procpkg.ResolveContainerByPort(portNum, ""); match != nil {
-					return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, nil)
+					procpkg.EnrichContainer(match)
+					return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, "")
 				}
 			}
 		}
@@ -750,7 +754,7 @@ func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer,
 	case multiMode:
 		outp.Printf("Error: %v\n", err)
 	default:
-		errorMsg := fmt.Sprintf("%s\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help", errStr)
+		errorMsg := errorWithHint(err)
 		if t.Type == model.TargetFile && runtime.GOOS != "windows" && os.Geteuid() != 0 {
 			errorMsg += "\n\nIf the file is held by another user's process, retry with sudo:\n  sudo " + strings.Join(os.Args, " ")
 		}
@@ -803,11 +807,18 @@ func renderResult(outw io.Writer, res model.Result, flags appFlags, multiMode bo
 func Root() *cobra.Command { return rootCmd }
 
 func runInteractive(targets []model.Target, exact bool) error {
+	// Without a terminal (a script, a pipe, CI) the TUI would wait forever.
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+		return withExitCode(ExitInvalidInput, errors.New("interactive mode needs a terminal; give a target to explain: a process name, --pid, --port, --file or --container"))
+	}
 	v := version
 	if v == "v0.0.0-dev" {
 		v = ""
 	}
-	return tui.Start(v, targets, exact)
+	if err := tui.Start(v, targets, exact); err != nil {
+		return withExitCode(ExitInternalError, err)
+	}
+	return nil
 }
 
 // processMatch is one candidate of an ambiguous process target.
@@ -875,6 +886,16 @@ func printContainerMultiMatch(outp output.Printer, matches []*model.ContainerMat
 	outp.Println("  witr -c <container-name> --exact")
 }
 
+// errorWithHint adds the next step to an error: lookups that found nothing
+// get the not-found hint, other failures (such as invalid input) only point
+// at --help.
+func errorWithHint(err error) string {
+	if classifyError(err) == ExitNotFound {
+		return err.Error() + "\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help"
+	}
+	return err.Error() + "\n\nFor usage and options, run: witr --help"
+}
+
 // classifyError maps common error strings to exit codes.
 func classifyError(err error) int {
 	msg := strings.ToLower(err.Error())
@@ -925,7 +946,7 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 	if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
 		return code
 	}
-	return renderContainerMatch(outw, outp, t, "container "+match.Name, match, flags, multiMode, jsonResults, nil)
+	return renderContainerMatch(outw, outp, t, "container "+match.Name, match, flags, multiMode, jsonResults, "")
 }
 
 // analyzeContainer runs the full analysis on match's main process when it is
@@ -978,11 +999,11 @@ func addSocketInfo(res *model.Result, t model.Target) {
 // renderContainerMatch renders a container in the selected output mode.
 // proxyPIDs lists the docker-proxy processes publishing it, when the target
 // was a port they listen on.
-func renderContainerMatch(outw io.Writer, outp output.Printer, t model.Target, label string, match *model.ContainerMatch, flags appFlags, multiMode bool, jsonResults *[]string, proxyPIDs []int) int {
+func renderContainerMatch(outw io.Writer, outp output.Printer, t model.Target, label string, match *model.ContainerMatch, flags appFlags, multiMode bool, jsonResults *[]string, note string) int {
 	colorEnabled := useColor(flags, outw)
 	switch {
 	case flags.json:
-		jsonStr, err := output.ContainerFallbackToJSON(label, match, proxyPIDs)
+		jsonStr, err := output.ContainerFallbackToJSON(label, match, note)
 		return emitJSONResult(outw, t, jsonStr, err, multiMode, jsonResults)
 	case flags.short:
 		output.RenderContainerFallbackShort(outw, label, match, colorEnabled)
@@ -990,31 +1011,12 @@ func renderContainerMatch(outw io.Writer, outp output.Printer, t model.Target, l
 		output.RenderContainerFallbackTree(outw, match, colorEnabled)
 	case flags.warn:
 		output.RenderContainerFallbackWarnings(outw, match, colorEnabled)
-	case len(proxyPIDs) > 0:
-		output.RenderProxiedContainer(outw, label, match, colorEnabled, flags.verbose, proxyPIDs)
+	case note != "":
+		output.RenderProxiedContainer(outw, label, match, colorEnabled, flags.verbose, note)
 	default:
 		output.RenderContainerFallback(outw, label, match, colorEnabled, flags.verbose)
 	}
 	return ExitOK
-}
-
-// dockerProxyContainer returns the container behind a port whose listeners
-// are all docker-proxy processes, the plumbing Docker uses to publish a
-// container's port on the host.
-func dockerProxyContainer(port int, pids []int) *model.ContainerMatch {
-	proto := ""
-	for _, pid := range pids {
-		p, ok := procpkg.DockerProxyProto(pid, port)
-		if !ok {
-			return nil
-		}
-		proto = p
-	}
-	match := procpkg.ResolveContainerByPort(port, proto)
-	if match != nil {
-		procpkg.EnrichContainer(match)
-	}
-	return match
 }
 
 func SetVersion(v string, c string, bd string) {

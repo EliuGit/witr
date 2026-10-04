@@ -400,6 +400,62 @@ func TestWithTargetsMatchExactlyAndListSkipped(t *testing.T) {
 	}
 }
 
+func manyProcesses(n int) []model.Process {
+	procs := make([]model.Process, n)
+	for i := range procs {
+		// Distinct memory keeps the default sort (memory, descending) in
+		// PID order.
+		procs[i] = model.Process{PID: i, Command: fmt.Sprintf("p%d", i), MemoryRSS: uint64(n-i) * 1024}
+	}
+	return procs
+}
+
+// `witr -i --pid N` shows N's row near the middle of the table, even when it
+// is far down the list.
+func TestInitialPIDIsScrolledIntoView(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = m.withTargets([]model.Target{{Type: model.TargetPID, Value: "250"}}, false)
+	nm, _ := m.handleProcessList(manyProcesses(400))
+	m = nm.(MainModel)
+
+	if row := m.table.SelectedRow(); len(row) == 0 || strings.TrimSpace(row[0]) != "250" {
+		t.Fatalf("selected row = %v, want PID 250", row)
+	}
+	var lines []string
+	for _, l := range strings.Split(m.table.View(), "\n")[1:] {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	at := -1
+	for i, l := range lines {
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "250" {
+			at = i
+		}
+	}
+	if at < len(lines)/4 || at > len(lines)*3/4 {
+		t.Errorf("PID 250 shows at line %d of %d, want it near the middle", at, len(lines))
+	}
+}
+
+// A refresh keeps PID 0 selected rather than jumping back to the top.
+func TestRefreshKeepsPIDZeroSelected(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	procs := manyProcesses(50)
+	nm, _ := m.handleProcessList(procs)
+	m = nm.(MainModel)
+	for i, p := range m.filtered {
+		if p.PID == 0 {
+			m.table.SetCursor(i)
+		}
+	}
+	nm, _ = m.handleProcessList(procs)
+	m = nm.(MainModel)
+	if row := m.table.SelectedRow(); len(row) == 0 || strings.TrimSpace(row[0]) != "0" {
+		t.Errorf("after a refresh the selection is %v, want PID 0", row)
+	}
+}
+
 func TestWithTargetsSeedsInitialState(t *testing.T) {
 	t.Run("pid target selects that process on first list", func(t *testing.T) {
 		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPID, Value: "2"}}, false)

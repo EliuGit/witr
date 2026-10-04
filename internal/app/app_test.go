@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,17 @@ func TestClassifyError(t *testing.T) {
 				t.Errorf("classifyError(%q) = %d, want %d", tt.msg, got, tt.want)
 			}
 		})
+	}
+}
+
+// Only a lookup that found nothing gets the not-found hint.
+func TestErrorWithHint(t *testing.T) {
+	t.Parallel()
+	if got := errorWithHint(errors.New("invalid pid")); strings.Contains(got, "No matching") {
+		t.Errorf("invalid input got the not-found hint:\n%s", got)
+	}
+	if got := errorWithHint(errors.New(`no running process or service named "x"`)); !strings.Contains(got, "No matching") {
+		t.Errorf("a lookup that found nothing lost its hint:\n%s", got)
 	}
 }
 

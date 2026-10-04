@@ -482,13 +482,17 @@ func (m MainModel) handleProcessList(msg []model.Process) (tea.Model, tea.Cmd) {
 		m.refreshEvery, m.slowStreak, m.fastStreak = adjustRefreshInterval(m.refreshEvery, took, m.slowStreak, m.fastStreak)
 	}
 
+	// Keep the selected process selected across refreshes. PID 0 is a valid
+	// selection (FreeBSD's kernel), so track whether there is one separately.
 	var currentPID int
-	selectedRow := m.table.SelectedRow()
-	if len(selectedRow) > 0 {
-		fmt.Sscanf(selectedRow[0], "%d", &currentPID)
+	hasCurrent := false
+	if row := m.table.SelectedRow(); len(row) > 0 {
+		_, err := fmt.Sscanf(row[0], "%d", &currentPID)
+		hasCurrent = err == nil
 	}
-	if m.initialPID > 0 {
-		currentPID = m.initialPID
+	initial := m.initialPID > 0
+	if initial {
+		currentPID, hasCurrent = m.initialPID, true
 		m.initialPID = 0
 	}
 
@@ -498,7 +502,7 @@ func (m MainModel) handleProcessList(msg []model.Process) (tea.Model, tea.Cmd) {
 
 	newIdx := 0
 	found := false
-	if currentPID > 0 {
+	if hasCurrent {
 		for i, p := range m.filtered {
 			if p.PID == currentPID {
 				newIdx = i
@@ -512,7 +516,11 @@ func (m MainModel) handleProcessList(msg []model.Process) (tea.Model, tea.Cmd) {
 		if !found {
 			newIdx = 0
 		}
-		m.table.SetCursor(newIdx)
+		if initial && found {
+			centerCursor(&m.table, newIdx)
+		} else {
+			m.table.SetCursor(newIdx)
+		}
 
 		m.selectionID++
 		p := m.filtered[newIdx]
@@ -962,7 +970,7 @@ func (m MainModel) handlePortAreaMouse(msg tea.MouseMsg, contentX int, isClick, 
 					m.state = stateDetail
 					m.viewport.GotoTop()
 					m.envViewport.GotoTop()
-					return m, m.fetchProcessDetail(pid)
+					return m, m.fetchPortOwnerDetail(pid, m.selectedPortNumber())
 				}
 			}
 		}
@@ -1157,7 +1165,7 @@ func (m MainModel) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						m.state = stateDetail
 						m.viewport.GotoTop()
 						m.envViewport.GotoTop()
-						return m, m.fetchProcessDetail(pid)
+						return m, m.fetchPortOwnerDetail(pid, m.selectedPortNumber())
 					}
 				}
 			}

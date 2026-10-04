@@ -14,6 +14,15 @@ import (
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
+// imageName returns the executable name of pid, or "".
+func imageName(pid int) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func ReadProcess(pid int) (model.Process, error) {
 	if pid <= 0 {
 		return model.Process{}, fmt.Errorf("invalid pid %d", pid)
