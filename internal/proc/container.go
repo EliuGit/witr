@@ -51,7 +51,10 @@ var dockerLikeRuntimeLabels = map[string]string{
 func ContainerDetails(id, runtime string, known *model.ContainerMatch) (*model.ContainerMatch, string) {
 	c := known
 	if c == nil {
-		c = ContainerByID(id, runtime)
+		// The list scan has no restart count, policy or start time.
+		if c = ContainerByID(id, runtime); c != nil {
+			EnrichContainer(c)
+		}
 	}
 	switch {
 	case c == nil:

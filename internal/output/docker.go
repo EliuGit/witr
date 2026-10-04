@@ -194,6 +194,13 @@ func renderContainerView(w io.Writer, targetLabel string, match *model.Container
 			out.Printf("Created     : %s\n", dtStr)
 		}
 	}
+	if v := restartsValue(match.RestartCount, match.RestartPolicy); v != "" {
+		if colorEnabled {
+			out.Printf("%sRestarts%s    : %s\n", ColorMagenta, ColorReset, v)
+		} else {
+			out.Printf("Restarts    : %s\n", v)
+		}
+	}
 
 	if networks != "" {
 		if colorEnabled {
@@ -238,6 +245,21 @@ func renderContainerView(w io.Writer, targetLabel string, match *model.Container
 	} else {
 		out.Printf("\nNote        : %s\n", note)
 	}
+}
+
+// restartsValue renders a restart count, with a container's restart policy
+// when it has one, or "" when there is nothing to say.
+func restartsValue(count int, policy string) string {
+	if policy == "no" {
+		policy = ""
+	}
+	switch {
+	case policy != "":
+		return fmt.Sprintf("%d (policy: %s)", count, SanitizeTerminalLine(policy))
+	case count > 0:
+		return strconv.Itoa(count)
+	}
+	return ""
 }
 
 // printComposeOrigin prints where a Compose-managed container was defined on
@@ -346,6 +368,8 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, no
 		State             string `json:",omitempty"`
 		Status            string `json:",omitempty"`
 		Health            string `json:",omitempty"`
+		RestartCount      int    `json:",omitempty"`
+		RestartPolicy     string `json:",omitempty"`
 		CreatedAt         string `json:",omitempty"`
 		StartedAt         string `json:",omitempty"`
 		Networks          string `json:",omitempty"`
@@ -379,6 +403,8 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, no
 		State:             match.State,
 		Status:            match.Status,
 		Health:            match.Health,
+		RestartCount:      match.RestartCount,
+		RestartPolicy:     match.RestartPolicy,
 		CreatedAt:         created,
 		StartedAt:         started,
 		Networks:          match.Networks,

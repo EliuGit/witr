@@ -8,7 +8,8 @@
 [94mCompose File[0m: /srv/expense-manager/docker-compose.yml
 [94mCompose Dir[0m : /srv/expense-manager
 [94mCommand[0m     : /usr/local/bin/python /usr/local/bin/gunicorn app:app --bind 0.0.0.0:8080 --workers 2
-[95mStarted[0m     : 5 days ago (Tue 2026-09-29 09:58:32 +00:00)
+[95mStarted[0m     : 5 days ago (Tue 2026-09-29 10:28:38 +00:00)
+[95mRestarts[0m    : 1 (policy: unless-stopped)
 
 [95mWhy It Exists[0m :
   systemd[0m ([90mpid 1[0m) [95m→[0m containerd-shim[0m ([90mpid 3120[0m) [95m→[0m [92mgunicorn[0m ([90mpid 3141[0m)

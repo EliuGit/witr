@@ -108,13 +108,18 @@ func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
 		fileCtx = procpkg.GetFileContext(cfg.PID)
 	}
 
+	// Restarts by the managing system: a systemd unit's NRestarts, or the
+	// container runtime's restart count.
 	restartCount := 0
-	if src.Type == model.SourceSystemd {
+	switch {
+	case src.Type == model.SourceSystemd:
 		if v, ok := src.Details["NRestarts"]; ok {
 			if count, err := strconv.Atoi(v); err == nil {
 				restartCount = count
 			}
 		}
+	case src.Type == model.SourceContainer && container != nil:
+		restartCount = container.RestartCount
 	}
 
 	res := model.Result{

@@ -122,7 +122,8 @@
       "ports": "127.0.0.1:6379->6379/tcp",
       "composeProject": "expense-manager", "composeService": "cache",
       "composeConfigFile": "/srv/expense-manager/docker-compose.yml",
-      "composeWorkingDir": "/srv/expense-manager"
+      "composeWorkingDir": "/srv/expense-manager",
+      "restartCount": 2, "restartPolicy": "always"
     },
     {
       "runtime": "docker", "id": "7c41e0b9a2d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9",
@@ -135,6 +136,7 @@
       "composeProject": "expense-manager", "composeService": "api",
       "composeConfigFile": "/srv/expense-manager/docker-compose.yml",
       "composeWorkingDir": "/srv/expense-manager",
+      "restartCount": 1, "restartPolicy": "unless-stopped",
       "pid": 3141
     }
   ],

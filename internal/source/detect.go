@@ -236,10 +236,15 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 
 	last := p[len(p)-1]
 
-	// Warn on a service that has restarted many times. restartCount is the real
-	// count from the service manager (e.g. systemd NRestarts), or 0 when unknown.
+	// Warn on a service or container that has restarted many times.
+	// restartCount is the real count from the service manager (e.g. systemd
+	// NRestarts) or the container runtime, or 0 when unknown.
 	if restartCount > 5 {
-		w = append(w, fmt.Sprintf("Service has restarted %d times", restartCount))
+		what := "Service"
+		if len(srcType) > 0 && srcType[0] == model.SourceContainer {
+			what = "Container"
+		}
+		w = append(w, fmt.Sprintf("%s has restarted %d times", what, restartCount))
 	}
 
 	// Health warnings

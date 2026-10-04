@@ -11,6 +11,8 @@ type ContainerMatch struct {
 	State             string
 	Status            string
 	Health            string
+	RestartCount      int    `json:",omitempty"` // restarts by the runtime (Kubernetes: the container's attempt number)
+	RestartPolicy     string `json:",omitempty"` // e.g. always, unless-stopped, on-failure:5
 	CreatedAt         time.Time
 	StartedAt         time.Time
 	Networks          string

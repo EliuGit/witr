@@ -784,7 +784,7 @@ What the user asked about.
 
 #### Process
 
-Executable, PID, user, command, start time and restart count.
+Executable, PID, user, command, start time and restart count. The restart count comes from the managing system: a systemd unit, or the container runtime (Docker, Podman, nerdctl and Kubernetes), which also shows the container's restart policy, e.g. `Restarts : 12 (policy: unless-stopped)`.
 
 #### Why It Exists
 

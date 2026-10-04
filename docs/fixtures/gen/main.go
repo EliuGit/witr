@@ -71,6 +71,8 @@ type container struct {
 	ComposeProject, ComposeService                           string
 	ComposeConfigFile, ComposeWorkingDir                     string
 	CreatedAgo, StartedAgo                                   int64
+	RestartCount                                             int
+	RestartPolicy                                            string
 	PID                                                      int // main process, when visible
 }
 type lock struct {
@@ -280,6 +282,7 @@ func (c container) toMatch(now time.Time) *model.ContainerMatch {
 		Networks: c.Networks, Mounts: c.Mounts, Ports: c.Ports,
 		ComposeProject: c.ComposeProject, ComposeService: c.ComposeService,
 		ComposeConfigFile: c.ComposeConfigFile, ComposeWorkingDir: c.ComposeWorkingDir,
+		RestartCount: c.RestartCount, RestartPolicy: c.RestartPolicy,
 	}
 	if c.StartedAgo != 0 {
 		m.StartedAt = now.Add(-time.Duration(c.StartedAgo) * time.Second)
@@ -361,6 +364,10 @@ func buildResult(w world, byPID map[int]proc, pid int, now time.Time, f fixture)
 	}
 	if c := findContainerByID(w, target.ContainerID); c != nil {
 		r.Container = c.toMatch(now)
+		// Mirrors pipeline.AnalyzePID: a container's restarts come from its runtime.
+		if src.Type == model.SourceContainer {
+			r.RestartCount = c.RestartCount
+		}
 	}
 	if len(target.LockedFiles) > 0 {
 		r.FileContext = &model.FileContext{LockedFiles: target.LockedFiles}

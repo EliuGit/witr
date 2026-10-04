@@ -2,6 +2,7 @@ package proc
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -150,26 +151,48 @@ func dockerLikeHostPID(bin, id string) int {
 	return pid
 }
 
-// dockerLikeEnrich fills in the container's actual start time via
-// `<bin> inspect --format '{{.State.StartedAt}}'`. The list scan only gives
-// us creation time, which is misleading for any container that was stopped
-// and restarted later.
+// dockerLikeEnrich fills in what only `<bin> inspect` reports: the actual
+// start time (the list scan only gives creation time, misleading for a
+// container that was stopped and restarted later), the restart count and the
+// restart policy.
 func dockerLikeEnrich(bin string, match *model.ContainerMatch) {
 	if match == nil || match.ID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
 	defer cancel()
-	out, err := runtimeCommand(ctx, bin, "inspect", "-f", "{{.State.StartedAt}}", match.ID).Output()
+	out, err := runtimeCommand(ctx, bin, "inspect", "--format", "{{json .}}", match.ID).Output()
 	if err != nil {
 		return
 	}
-	s := strings.TrimSpace(string(out))
-	if s == "" || s == "0001-01-01T00:00:00Z" {
+	applyDockerInspect(match, out)
+}
+
+// applyDockerInspect copies the start time, restart count and restart policy
+// from a container's inspect document. Reading the whole document rather than
+// a template keeps a field one runtime lacks from failing the rest.
+func applyDockerInspect(match *model.ContainerMatch, doc []byte) {
+	var c struct {
+		State        struct{ StartedAt string }
+		RestartCount int
+		HostConfig   struct {
+			RestartPolicy struct {
+				Name              string
+				MaximumRetryCount int
+			}
+		}
+	}
+	if json.Unmarshal(doc, &c) != nil {
 		return
 	}
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+	if t, err := time.Parse(time.RFC3339Nano, c.State.StartedAt); err == nil && !t.IsZero() {
 		match.StartedAt = t
+	}
+	match.RestartCount = c.RestartCount
+	policy := c.HostConfig.RestartPolicy
+	match.RestartPolicy = policy.Name
+	if policy.Name == "on-failure" && policy.MaximumRetryCount > 0 {
+		match.RestartPolicy += ":" + strconv.Itoa(policy.MaximumRetryCount)
 	}
 }
 

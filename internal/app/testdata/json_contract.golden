@@ -110,6 +110,8 @@ Container.Mounts string
 Container.Name string
 Container.Networks string
 Container.Ports string
+Container.RestartCount number
+Container.RestartPolicy string
 Container.Runtime string
 Container.StartedAt string
 Container.State string
@@ -233,6 +235,8 @@ Mounts string
 Networks string
 Note string
 Ports string
+RestartCount number
+RestartPolicy string
 Runtime string
 Source string
 StartedAt string
@@ -268,6 +272,8 @@ Matches[].Mounts string
 Matches[].Name string
 Matches[].Networks string
 Matches[].Ports string
+Matches[].RestartCount number
+Matches[].RestartPolicy string
 Matches[].Runtime string
 Matches[].StartedAt string
 Matches[].State string

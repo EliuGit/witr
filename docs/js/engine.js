@@ -144,11 +144,14 @@ export class Engine {
     const ancestry = this.ancestryOf(proc);
     const children = this.childrenOf(pid);
     const source = this.resolveSource(proc, ancestry);
-    // Restart count comes only from a systemd unit's NRestarts, mirroring
-    // pipeline.AnalyzePID — not an arbitrary per-process field.
+    // Restarts by the managing system, mirroring pipeline.AnalyzePID: a
+    // systemd unit's NRestarts, or the container runtime's restart count.
+    const container = (this.world.containers || []).find((c) => proc.containerId && c.id === proc.containerId) || null;
     let restartCount = 0;
     if (source.type === 'systemd' && source.details && source.details.NRestarts) {
       restartCount = parseInt(source.details.NRestarts, 10) || 0;
+    } else if (source.type === 'container' && container) {
+      restartCount = container.restartCount || 0;
     }
     return {
       target: proc,
@@ -159,7 +162,7 @@ export class Engine {
       restartCount,
       warnings: proc.warnings || [],
       // Result.Container: the runtime's details for a containerized process.
-      container: (this.world.containers || []).find((c) => proc.containerId && c.id === proc.containerId) || null,
+      container,
     };
   }
 
@@ -413,8 +416,9 @@ export class Engine {
     const startVal = abs ? `${rel} (${abs})` : rel;
     o += color ? `${ESC.magenta}Started${ESC.reset}     : ${startVal}\n` : `Started     : ${startVal}\n`;
 
-    if (r.restartCount > 0) {
-      o += color ? `${ESC.magenta}Restarts${ESC.reset}    : ${r.restartCount}\n` : `Restarts    : ${r.restartCount}\n`;
+    const restarts = restartsValue(r.restartCount, r.container ? r.container.restartPolicy : '');
+    if (restarts) {
+      o += color ? `${ESC.magenta}Restarts${ESC.reset}    : ${restarts}\n` : `Restarts    : ${restarts}\n`;
     }
     if (r.source.details && r.source.details.schedule) {
       const sch = r.source.details.schedule;
@@ -778,6 +782,8 @@ function renderContainerFallback(label, m, color, verbose, engine) {
     const [, abs] = formatStartedAt(engine.now() - m.createdAgo * 1000, engine.now());
     o += color ? `${ESC.blue}Created${ESC.reset}     : ${abs}\n` : `Created     : ${abs}\n`;
   }
+  const restarts = restartsValue(m.restartCount || 0, m.restartPolicy);
+  if (restarts) o += color ? `${ESC.magenta}Restarts${ESC.reset}    : ${restarts}\n` : `Restarts    : ${restarts}\n`;
   if (m.networks) o += color ? `${ESC.blue}Network${ESC.reset}     : ${m.networks}\n` : `Network     : ${m.networks}\n`;
 
   o += color ? `\n${ESC.magenta}Why It Exists${ESC.reset} :\n  ` : `\nWhy It Exists :\n  `;
@@ -795,6 +801,15 @@ function renderContainerFallback(label, m, color, verbose, engine) {
     ? `\n${ESC.dimYellow}Note${ESC.reset}        : The owning process is not visible in this environment.\n`
     : `\nNote        : The owning process is not visible in this environment.\n`;
   return o;
+}
+
+// restartsValue mirrors output.restartsValue: a restart count, with a
+// container's restart policy when it has one.
+function restartsValue(count, policy) {
+  const p = policy === 'no' ? '' : policy || '';
+  if (p) return `${count} (policy: ${p})`;
+  if (count > 0) return String(count);
+  return '';
 }
 
 // composeOrigin mirrors printComposeOrigin: where a Compose-managed

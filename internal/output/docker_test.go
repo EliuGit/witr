@@ -316,3 +316,29 @@ func TestRenderContainerFallbackSanitizesOutput(t *testing.T) {
 		t.Errorf("output contains raw ANSI escape sequences, sanitization failed:\n%s", out)
 	}
 }
+
+// The Restarts line shows the count with the restart policy; the default
+// "no" policy and a zero count say nothing.
+func TestRestartsValue(t *testing.T) {
+	tests := []struct {
+		count  int
+		policy string
+		want   string
+	}{
+		{0, "", ""},
+		{0, "no", ""},
+		{3, "", "3"},
+		{0, "always", "0 (policy: always)"},
+		{12, "on-failure:5", "12 (policy: on-failure:5)"},
+	}
+	for _, tt := range tests {
+		if got := restartsValue(tt.count, tt.policy); got != tt.want {
+			t.Errorf("restartsValue(%d, %q) = %q, want %q", tt.count, tt.policy, got, tt.want)
+		}
+	}
+	var b bytes.Buffer
+	RenderContainerFallback(&b, "container web", &model.ContainerMatch{Runtime: "docker", ID: "abc", Name: "web", RestartCount: 4, RestartPolicy: "unless-stopped"}, false, false)
+	if !strings.Contains(b.String(), "Restarts    : 4 (policy: unless-stopped)") {
+		t.Errorf("container view missing the Restarts line:\n%s", b.String())
+	}
+}

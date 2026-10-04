@@ -414,3 +414,15 @@ func TestWarningsEmptyInputReturnsNil(t *testing.T) {
 		t.Errorf("Warnings(nil) = %v, want nil", got)
 	}
 }
+
+// A container that keeps restarting is named as a container.
+func TestWarningsContainerRestarts(t *testing.T) {
+	t.Parallel()
+	got := Warnings([]model.Process{baseProc()}, 9, model.SourceContainer)
+	if !contains(got, "Container has restarted 9 times") {
+		t.Errorf("expected the container restart warning, got: %v", got)
+	}
+	if got := Warnings([]model.Process{baseProc()}, 9, model.SourceSystemd); !contains(got, "Service has restarted 9 times") {
+		t.Errorf("expected the service restart warning, got: %v", got)
+	}
+}

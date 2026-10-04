@@ -186,13 +186,17 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		out.Printf("Started     : %s (%s)\n", rel, dtStr)
 	}
 
-	// Restart count (sourced from systemd's NRestarts); shown only when the
-	// managing system has restarted the unit at least once.
-	if r.RestartCount > 0 {
+	// Restarts by the managing system (systemd's NRestarts, or the container
+	// runtime's count), with the container's restart policy.
+	policy := ""
+	if r.Container != nil {
+		policy = r.Container.RestartPolicy
+	}
+	if v := restartsValue(r.RestartCount, policy); v != "" {
 		if colorEnabled {
-			out.Printf("%sRestarts%s    : %d\n", ColorMagenta, ColorReset, r.RestartCount)
+			out.Printf("%sRestarts%s    : %s\n", ColorMagenta, ColorReset, v)
 		} else {
-			out.Printf("Restarts    : %d\n", r.RestartCount)
+			out.Printf("Restarts    : %s\n", v)
 		}
 	}
 

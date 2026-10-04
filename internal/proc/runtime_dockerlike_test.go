@@ -2,6 +2,8 @@ package proc
 
 import (
 	"testing"
+
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func TestParseLabelString(t *testing.T) {
@@ -42,5 +44,33 @@ func TestParseDockerTime(t *testing.T) {
 	got := parseDockerTime("2024-01-02T15:04:05Z")
 	if got.IsZero() || got.Year() != 2024 {
 		t.Errorf("parseDockerTime(RFC3339) = %v, want a 2024 time", got)
+	}
+}
+
+// Docker and Podman inspect documents carry the start time, restart count and
+// policy; nerdctl may leave the policy out without losing the rest.
+func TestApplyDockerInspect(t *testing.T) {
+	tests := []struct {
+		name, doc   string
+		wantCount   int
+		wantPolicy  string
+		wantStarted bool
+	}{
+		{"docker", `{"State":{"StartedAt":"2026-10-04T09:04:31.123456789Z"},"RestartCount":3,"HostConfig":{"RestartPolicy":{"Name":"unless-stopped","MaximumRetryCount":0}}}`, 3, "unless-stopped", true},
+		{"on-failure limit", `{"State":{"StartedAt":"2026-10-04T09:04:31Z"},"RestartCount":2,"HostConfig":{"RestartPolicy":{"Name":"on-failure","MaximumRetryCount":5}}}`, 2, "on-failure:5", true},
+		{"no policy field", `{"State":{"StartedAt":"2026-10-04T09:04:31Z"},"RestartCount":1}`, 1, "", true},
+		{"never started", `{"State":{"StartedAt":"0001-01-01T00:00:00Z"},"RestartCount":0,"HostConfig":{"RestartPolicy":{"Name":"no"}}}`, 0, "no", false},
+	}
+	for _, tt := range tests {
+		m := &model.ContainerMatch{}
+		applyDockerInspect(m, []byte(tt.doc))
+		if m.RestartCount != tt.wantCount || m.RestartPolicy != tt.wantPolicy || m.StartedAt.IsZero() == tt.wantStarted {
+			t.Errorf("%s: got count=%d policy=%q started=%v", tt.name, m.RestartCount, m.RestartPolicy, m.StartedAt)
+		}
+	}
+	m := &model.ContainerMatch{RestartPolicy: "always"}
+	applyDockerInspect(m, []byte("not json"))
+	if m.RestartPolicy != "always" {
+		t.Errorf("an unreadable document changed the match: %+v", m)
 	}
 }
