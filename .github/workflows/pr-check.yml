@@ -33,6 +33,20 @@ jobs:
             exit 1
           fi
 
+      # Git for Windows defaults to core.symlinks=false, so a tracked symlink
+      # (mode 120000) is checked out as a plain text file holding the link
+      # target; that made `go build ./...` and `go test ./...` fail at the module
+      # root on Windows. CI checks out symlinks, so guard against reintroducing
+      # them instead of relying on the Windows test job to notice.
+      - name: Verify tracked files do not rely on symlinks
+        run: |
+          links="$(git ls-files -s | awk '$1 == "120000"')"
+          if [ -n "$links" ]; then
+            echo "Tracked symlinks cannot be checked out where symlinks are unsupported:"
+            echo "$links"
+            exit 1
+          fi
+
   golangci-lint:
     name: "Code Quality: Lint (${{ matrix.goos }}/${{ matrix.goarch }})"
     runs-on: ubuntu-latest
