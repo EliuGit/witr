@@ -1,7 +1,6 @@
 package output
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -381,9 +380,5 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, pr
 		res.Note = proxiedNote(proxyPIDs)
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }

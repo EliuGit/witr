@@ -3,7 +3,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -172,7 +171,7 @@ type appFlags struct {
 func runApp(cmd *cobra.Command, args []string) error {
 	interactiveFlag, _ := cmd.Flags().GetBool("interactive")
 	if interactiveFlag {
-		return runInteractive(collectTargetsInOrder(os.Args[1:], args, flagTakesValue(cmd)))
+		return runInteractive(orderedTargets(cmd, os.Args[1:], args), boolFlag(cmd, "exact"))
 	}
 
 	envFlag, _ := cmd.Flags().GetBool("env")
@@ -182,7 +181,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 	containerFlags, _ := cmd.Flags().GetStringSlice("container")
 
 	if !envFlag && len(pidFlags) == 0 && len(portFlags) == 0 && len(fileFlags) == 0 && len(containerFlags) == 0 && len(args) == 0 {
-		return runInteractive(nil)
+		return runInteractive(nil, false)
 	}
 
 	flags := appFlags{
@@ -197,7 +196,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect all targets preserving command-line order
-	targets := collectTargetsInOrder(os.Args[1:], args, flagTakesValue(cmd))
+	targets := orderedTargets(cmd, os.Args[1:], args)
 
 	if len(targets) == 0 {
 		return withExitCode(ExitInvalidInput, fmt.Errorf("must specify --pid, --port, --file, --container, or a process name"))
@@ -361,6 +360,103 @@ func collectTargetsInOrder(rawArgs []string, positionalArgs []string, takesValue
 	return targets
 }
 
+// orderedTargets returns the targets in the order they were typed. The walk
+// over the raw arguments only exists to recover that order, so whenever it
+// disagrees with what cobra parsed, cobra's values win and no target is lost.
+func orderedTargets(cmd *cobra.Command, rawArgs, args []string) []model.Target {
+	ordered := collectTargetsInOrder(expandShortFlags(rawArgs, shortFlagArity(cmd)), args, flagTakesValue(cmd))
+	if parsed := parsedTargets(cmd, args); !sameTargets(ordered, parsed) {
+		return parsed
+	}
+	return ordered
+}
+
+// shortFlagArity reports whether a one-letter flag exists and takes a value.
+func shortFlagArity(cmd *cobra.Command) func(string) (known, takesValue bool) {
+	return func(short string) (bool, bool) {
+		f := cmd.Flags().ShorthandLookup(short)
+		if f == nil {
+			return false, false
+		}
+		return true, f.NoOptDefVal == ""
+	}
+}
+
+// expandShortFlags rewrites combined and attached short flags into separate
+// tokens, the way pflag reads them: -sp 1 becomes -s -p 1, and -p1 or -p=1
+// becomes -p 1. Everything after "--" is left alone.
+func expandShortFlags(args []string, arity func(string) (known, takesValue bool)) []string {
+	out := make([]string, 0, len(args))
+	for i, arg := range args {
+		if arg == "--" {
+			return append(out, args[i:]...)
+		}
+		if len(arg) < 3 || arg[0] != '-' || arg[1] == '-' {
+			out = append(out, arg)
+			continue
+		}
+		rest := arg[1:]
+		for rest != "" {
+			known, takesValue := arity(rest[:1])
+			if !known {
+				out = append(out, "-"+rest) // left for cobra to reject
+				break
+			}
+			out = append(out, "-"+rest[:1])
+			rest = rest[1:]
+			if takesValue {
+				if v := strings.TrimPrefix(rest, "="); v != "" {
+					out = append(out, v)
+				}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// parsedTargets lists the targets cobra parsed, grouped by type.
+func parsedTargets(cmd *cobra.Command, args []string) []model.Target {
+	var targets []model.Target
+	for _, name := range args {
+		targets = append(targets, model.Target{Type: model.TargetName, Value: name})
+	}
+	for _, f := range []struct {
+		name string
+		typ  model.TargetType
+	}{
+		{"pid", model.TargetPID},
+		{"port", model.TargetPort},
+		{"file", model.TargetFile},
+		{"container", model.TargetContainer},
+	} {
+		values, _ := cmd.Flags().GetStringSlice(f.name)
+		for _, v := range values {
+			if v = strings.TrimSpace(v); v != "" {
+				targets = append(targets, model.Target{Type: f.typ, Value: v})
+			}
+		}
+	}
+	return targets
+}
+
+// sameTargets reports whether a and b hold the same targets in any order.
+func sameTargets(a, b []model.Target) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	count := map[model.Target]int{}
+	for _, t := range a {
+		count[t]++
+	}
+	for _, t := range b {
+		if count[t]--; count[t] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // targetLabel returns a human-readable label for the divider.
 func targetLabel(t model.Target) string {
 	switch t.Type {
@@ -402,8 +498,8 @@ func jsonMatchEntry(t model.Target, errMsg string, matches any) string {
 		Error   string
 		Matches any `json:",omitempty"`
 	}
-	data, _ := json.MarshalIndent(errorEntry{Error: errMsg, Target: t, Matches: matches}, "", "  ")
-	return string(data)
+	data, _ := output.MarshalJSON(errorEntry{Error: errMsg, Target: t, Matches: matches})
+	return data
 }
 
 // emitJSON adds an entry to the multi-target JSON array, or prints it as the
@@ -416,14 +512,21 @@ func emitJSON(outw io.Writer, entry string, multiMode bool, jsonResults *[]strin
 	fmt.Fprintln(outw, entry)
 }
 
-// jsonError reports a failed target under --json without breaking stdout: an
-// entry in the multi-target array, or text on stderr for a single target.
+// jsonError reports a failed target under --json as a {Target, Error} entry,
+// so stdout stays JSON for a single target and multi-target arrays alike.
 func jsonError(cmd *cobra.Command, t model.Target, msg string, multiMode bool, jsonResults *[]string) {
-	if multiMode {
-		*jsonResults = append(*jsonResults, jsonErrorEntry(t, msg))
-		return
+	emitJSON(cmd.OutOrStdout(), jsonErrorEntry(t, msg), multiMode, jsonResults)
+}
+
+// emitJSONResult emits a rendered JSON entry, or an error entry for t when
+// rendering failed, so --json output never mixes in plain text.
+func emitJSONResult(outw io.Writer, t model.Target, jsonStr string, err error, multiMode bool, jsonResults *[]string) int {
+	if err != nil {
+		emitJSON(outw, jsonErrorEntry(t, "failed to generate json output: "+err.Error()), multiMode, jsonResults)
+		return ExitInternalError
 	}
-	cmd.PrintErrln(msg)
+	emitJSON(outw, jsonStr, multiMode, jsonResults)
+	return ExitOK
 }
 
 // processTarget handles resolving and rendering a single target.
@@ -456,7 +559,7 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 				if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
 					return code
 				}
-				return renderContainerMatch(outw, outp, "port "+t.Value, match, flags, multiMode, jsonResults, pids)
+				return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, pids)
 			}
 		}
 	}
@@ -493,17 +596,15 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 	})
 
 	if err != nil {
-		if multiMode {
-			if flags.json {
-				*jsonResults = append(*jsonResults, jsonErrorEntry(t, err.Error()))
-			} else {
-				outp.Printf("Error: %v\n", err)
-			}
-			return classifyError(err)
+		switch {
+		case flags.json:
+			jsonError(cmd, t, err.Error(), multiMode, jsonResults)
+		case multiMode:
+			outp.Printf("Error: %v\n", err)
+		default:
+			errorMsg := fmt.Sprintf("%s\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help", err.Error())
+			cmd.PrintErrln(errorMsg)
 		}
-		errStr := err.Error()
-		errorMsg := fmt.Sprintf("%s\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help", errStr)
-		cmd.PrintErrln(errorMsg)
 		return classifyError(err)
 	}
 
@@ -512,97 +613,95 @@ func processTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 	}
 
 	addSocketInfo(&res, t)
-
-	renderResult(outw, res, flags, multiMode, jsonResults)
-
-	if len(res.Warnings) > 0 {
-		return ExitWarnings
-	}
-	return ExitOK
+	return renderResult(outw, res, flags, multiMode, jsonResults)
 }
 
 // processEnvTarget handles the --env flag for a single target.
 func processEnvTarget(cmd *cobra.Command, outw io.Writer, outp output.Printer, t model.Target, flags appFlags, multiMode bool, jsonResults *[]string) int {
 	colorEnabled := useColor(flags, outw)
 
-	pids, err := target.Resolve(t, flags.exact)
-	if err != nil {
+	fail := func(msg string, code int) int {
 		switch {
 		case flags.json:
-			jsonError(cmd, t, err.Error(), multiMode, jsonResults)
+			jsonError(cmd, t, msg, multiMode, jsonResults)
 		case multiMode:
-			outp.Printf("Error: %v\n", err)
+			outp.Printf("Error: %s\n", msg)
 		default:
-			outp.Printf("error: %v\n", err)
+			outp.Printf("error: %s\n", msg)
 		}
-		return classifyError(err)
-	}
-	if len(pids) == 0 {
-		if flags.json {
-			jsonError(cmd, t, "no matching process found", multiMode, jsonResults)
-		} else {
-			outp.Println("No matching process found.")
-		}
-		return ExitNotFound
-	}
-	if len(pids) > 1 {
-		if flags.json {
-			emitJSON(outw, jsonMatchEntry(t, fmt.Sprintf("multiple processes matched (%d results)", len(pids)), processMatches(pids)), multiMode, jsonResults)
-		} else {
-			printMultiMatch(outp, pids, colorEnabled, "witr --pid <pid> --env")
-		}
-		return ExitInvalidInput
+		return code
 	}
 
-	pid := pids[0]
+	var pid int
+	if t.Type == model.TargetContainer {
+		matches := procpkg.ResolveContainer(t.Value, flags.exact)
+		switch {
+		case len(matches) == 0:
+			return fail(fmt.Sprintf("no container found matching %q", t.Value), ExitNotFound)
+		case len(matches) > 1:
+			if flags.json {
+				emitJSON(outw, jsonMatchEntry(t, fmt.Sprintf("multiple containers matched (%d results)", len(matches)), matches), multiMode, jsonResults)
+			} else {
+				printContainerMultiMatch(outp, matches, colorEnabled)
+			}
+			return ExitInvalidInput
+		}
+		match := matches[0]
+		pid = procpkg.ResolveContainerHostPID(match.Runtime, match.ID)
+		if pid <= 0 || !procpkg.PIDBelongsToContainer(pid, match.ID) {
+			return fail(fmt.Sprintf("container %s has no process visible from here", match.Name), ExitNotFound)
+		}
+	} else {
+		pids, err := target.Resolve(t, flags.exact)
+		switch {
+		case err != nil:
+			return fail(err.Error(), classifyError(err))
+		case len(pids) == 0:
+			return fail("no matching process found", ExitNotFound)
+		case len(pids) > 1:
+			if flags.json {
+				emitJSON(outw, jsonMatchEntry(t, fmt.Sprintf("multiple processes matched (%d results)", len(pids)), processMatches(pids)), multiMode, jsonResults)
+			} else {
+				printMultiMatch(outp, pids, colorEnabled, "witr --pid <pid> --env")
+			}
+			return ExitInvalidInput
+		}
+		pid = pids[0]
+	}
+
 	procInfo, err := procpkg.ReadProcess(pid)
 	if err != nil {
-		if flags.json {
-			jsonError(cmd, t, err.Error(), multiMode, jsonResults)
-		} else {
-			outp.Printf("error: %v\n", err)
-		}
-		return ExitInternalError
+		return fail(err.Error(), classifyError(err))
 	}
 
 	resEnv := model.Result{
+		Target:   t,
 		Process:  procInfo,
 		Ancestry: []model.Process{procInfo},
 	}
 
 	if flags.json {
 		jsonStr, err := output.ToEnvJSON(resEnv)
-		if err != nil {
-			outp.Printf("failed to generate json output: %v\n", err)
-			return ExitInternalError
-		}
-		if multiMode {
-			*jsonResults = append(*jsonResults, jsonStr)
-		} else {
-			fmt.Fprintln(outw, jsonStr)
-		}
-	} else {
-		output.RenderEnvOnly(outw, resEnv, colorEnabled)
+		return emitJSONResult(outw, t, jsonStr, err, multiMode, jsonResults)
 	}
+	output.RenderEnvOnly(outw, resEnv, colorEnabled)
 	return ExitOK
 }
 
 // handleResolveError handles target resolution errors, including Docker fallback.
 func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer, t model.Target, err error, flags appFlags, multiMode bool, jsonResults *[]string) int {
 	errStr := err.Error()
-	colorEnabled := useColor(flags, outw)
 
 	// Platform-unsupported target (e.g. -f on Windows). Don't tack on the
 	// generic "try a different name/port/PID" suffix — the operation isn't a
 	// failed lookup, it's unavailable on this OS.
 	if errors.Is(err, target.ErrUnsupported) || strings.Contains(errStr, "not supported on") {
-		if multiMode {
-			if flags.json {
-				*jsonResults = append(*jsonResults, jsonErrorEntry(t, errStr))
-			} else {
-				outp.Printf("Error: %v\n", err)
-			}
-		} else {
+		switch {
+		case flags.json:
+			jsonError(cmd, t, errStr, multiMode, jsonResults)
+		case multiMode:
+			outp.Printf("Error: %v\n", err)
+		default:
 			cmd.PrintErrln(errStr)
 		}
 		return ExitInvalidInput
@@ -612,102 +711,84 @@ func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer,
 		if t.Type == model.TargetPort {
 			if portNum, convErr := strconv.Atoi(t.Value); convErr == nil {
 				if match := procpkg.ResolveContainerByPort(portNum, ""); match != nil {
-					label := "port " + t.Value
-					if flags.json {
-						jsonStr, jsonErr := output.ContainerFallbackToJSON(label, match, nil)
-						if jsonErr != nil {
-							outp.Printf("failed to generate json output: %v\n", jsonErr)
-							return ExitInternalError
-						}
-						if multiMode {
-							*jsonResults = append(*jsonResults, jsonStr)
-						} else {
-							fmt.Fprintln(outw, jsonStr)
-						}
-					} else if flags.short {
-						output.RenderContainerFallbackShort(outw, label, match, colorEnabled)
-					} else {
-						output.RenderContainerFallback(outw, label, match, colorEnabled, flags.verbose)
-					}
-					return ExitOK
+					return renderContainerMatch(outw, outp, t, "port "+t.Value, match, flags, multiMode, jsonResults, nil)
 				}
 			}
 		}
-		if multiMode {
-			if flags.json {
-				*jsonResults = append(*jsonResults, jsonErrorEntry(t, "socket found but owning process not detected (try sudo)"))
-			} else {
-				outp.Printf("Error: socket found but owning process not detected (try sudo)\n")
-			}
-			return ExitPermission
+		const ownerUnknown = "socket found but owning process not detected (try sudo)"
+		switch {
+		case flags.json:
+			jsonError(cmd, t, ownerUnknown, multiMode, jsonResults)
+		case multiMode:
+			outp.Printf("Error: %s\n", ownerUnknown)
+		default:
+			errorMsg := fmt.Sprintf("%s\n\nA socket was found for the port, but the owning process could not be detected.\nThis may be due to insufficient permissions. Try running with sudo:\n  sudo %s", errStr, strings.Join(os.Args, " "))
+			cmd.PrintErrln(errorMsg)
 		}
-		errorMsg := fmt.Sprintf("%s\n\nA socket was found for the port, but the owning process could not be detected.\nThis may be due to insufficient permissions. Try running with sudo:\n  sudo %s", errStr, strings.Join(os.Args, " "))
-		cmd.PrintErrln(errorMsg)
 		return ExitPermission
 	}
 
-	if multiMode {
-		if flags.json {
-			*jsonResults = append(*jsonResults, jsonErrorEntry(t, errStr))
-		} else {
-			outp.Printf("Error: %v\n", err)
+	switch {
+	case flags.json:
+		jsonError(cmd, t, errStr, multiMode, jsonResults)
+	case multiMode:
+		outp.Printf("Error: %v\n", err)
+	default:
+		errorMsg := fmt.Sprintf("%s\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help", errStr)
+		if t.Type == model.TargetFile && runtime.GOOS != "windows" && os.Geteuid() != 0 {
+			errorMsg += "\n\nIf the file is held by another user's process, retry with sudo:\n  sudo " + strings.Join(os.Args, " ")
 		}
-		return classifyError(err)
+		cmd.PrintErrln(errorMsg)
 	}
-	errorMsg := fmt.Sprintf("%s\n\nNo matching process or service found. Please check your query or try a different name/port/PID.\nFor usage and options, run: witr --help", errStr)
-	if t.Type == model.TargetFile && runtime.GOOS != "windows" && os.Geteuid() != 0 {
-		errorMsg += "\n\nIf the file is held by another user's process, retry with sudo:\n  sudo " + strings.Join(os.Args, " ")
-	}
-	cmd.PrintErrln(errorMsg)
 	return classifyError(err)
 }
 
-// renderResult renders a single result in the appropriate output mode.
-func renderResult(outw io.Writer, res model.Result, flags appFlags, multiMode bool, jsonResults *[]string) {
+// renderResult renders a single result in the selected output mode and
+// returns the target's exit code.
+func renderResult(outw io.Writer, res model.Result, flags appFlags, multiMode bool, jsonResults *[]string) int {
 	colorEnabled := useColor(flags, outw)
 
-	if flags.json {
+	switch {
+	case flags.json:
 		var jsonStr string
 		var err error
-
-		if flags.short {
+		switch {
+		case flags.short:
 			jsonStr, err = output.ToShortJSON(res)
-		} else if flags.tree {
+		case flags.tree:
 			jsonStr, err = output.ToTreeJSON(res)
-		} else if flags.warn {
+		case flags.warn:
 			jsonStr, err = output.ToWarningsJSON(res)
-		} else {
+		default:
 			jsonStr, err = output.ToJSON(res)
 		}
-
-		if err != nil {
-			fmt.Fprintf(outw, "failed to generate json output: %v\n", err)
-			return
+		if code := emitJSONResult(outw, res.Target, jsonStr, err, multiMode, jsonResults); code != ExitOK {
+			return code
 		}
-		if multiMode {
-			*jsonResults = append(*jsonResults, jsonStr)
-		} else {
-			fmt.Fprintln(outw, jsonStr)
-		}
-	} else if flags.warn {
+	case flags.warn:
 		output.RenderWarnings(outw, res, colorEnabled)
-	} else if flags.tree {
+	case flags.tree:
 		output.PrintTree(outw, res.Ancestry, res.Children, colorEnabled)
-	} else if flags.short {
+	case flags.short:
 		output.RenderShort(outw, res, colorEnabled)
-	} else {
+	default:
 		output.RenderStandard(outw, res, colorEnabled, flags.verbose)
 	}
+
+	if len(res.Warnings) > 0 {
+		return ExitWarnings
+	}
+	return ExitOK
 }
 
 func Root() *cobra.Command { return rootCmd }
 
-func runInteractive(targets []model.Target) error {
+func runInteractive(targets []model.Target, exact bool) error {
 	v := version
 	if v == "v0.0.0-dev" {
 		v = ""
 	}
-	return tui.Start(v, targets)
+	return tui.Start(v, targets, exact)
 }
 
 // processMatch is one candidate of an ambiguous process target.
@@ -786,6 +867,8 @@ func classifyError(err error) int {
 	case strings.Contains(msg, "no matching") ||
 		strings.Contains(msg, "no running process") ||
 		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "no container found") ||
 		strings.Contains(msg, "no process"):
 		return ExitNotFound
 	case strings.Contains(msg, "invalid") ||
@@ -823,7 +906,7 @@ func processContainerTarget(cmd *cobra.Command, outw io.Writer, outp output.Prin
 	if code, ok := analyzeContainer(cmd, outw, outp, t, match, flags, multiMode, jsonResults); ok {
 		return code
 	}
-	return renderContainerMatch(outw, outp, "container "+match.Name, match, flags, multiMode, jsonResults, nil)
+	return renderContainerMatch(outw, outp, t, "container "+match.Name, match, flags, multiMode, jsonResults, nil)
 }
 
 // analyzeContainer runs the full analysis on match's main process when it is
@@ -857,11 +940,7 @@ func analyzeContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t
 		res.Container = match
 	}
 	addSocketInfo(&res, t)
-	renderResult(outw, res, flags, multiMode, jsonResults)
-	if len(res.Warnings) > 0 {
-		return ExitWarnings, true
-	}
-	return ExitOK, true
+	return renderResult(outw, res, flags, multiMode, jsonResults), true
 }
 
 // addSocketInfo explains the socket state of a port target.
@@ -880,20 +959,12 @@ func addSocketInfo(res *model.Result, t model.Target) {
 // renderContainerMatch renders a container in the selected output mode.
 // proxyPIDs lists the docker-proxy processes publishing it, when the target
 // was a port they listen on.
-func renderContainerMatch(outw io.Writer, outp output.Printer, label string, match *model.ContainerMatch, flags appFlags, multiMode bool, jsonResults *[]string, proxyPIDs []int) int {
+func renderContainerMatch(outw io.Writer, outp output.Printer, t model.Target, label string, match *model.ContainerMatch, flags appFlags, multiMode bool, jsonResults *[]string, proxyPIDs []int) int {
 	colorEnabled := useColor(flags, outw)
 	switch {
 	case flags.json:
 		jsonStr, err := output.ContainerFallbackToJSON(label, match, proxyPIDs)
-		if err != nil {
-			outp.Printf("failed to generate json output: %v\n", err)
-			return ExitInternalError
-		}
-		if multiMode {
-			*jsonResults = append(*jsonResults, jsonStr)
-		} else {
-			fmt.Fprintln(outw, jsonStr)
-		}
+		return emitJSONResult(outw, t, jsonStr, err, multiMode, jsonResults)
 	case flags.short:
 		output.RenderContainerFallbackShort(outw, label, match, colorEnabled)
 	case flags.tree:

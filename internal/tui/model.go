@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -225,6 +226,11 @@ type MainModel struct {
 
 	// PID to select once the first process list arrives
 	initialPID int
+
+	// exactName and exactPort make filters seeded from CLI targets match
+	// exactly (names with -x, ports always) until the user edits them.
+	exactName bool
+	exactPort bool
 }
 
 func InitialModel(version string) MainModel {
@@ -386,10 +392,10 @@ func InitialModel(version string) MainModel {
 	}
 }
 
-func Start(version string, targets []model.Target) error {
+func Start(version string, targets []model.Target, exact bool) error {
 	lipgloss.SetColorProfile(lipglossProfile(colorProfile))
 
-	p := tea.NewProgram(InitialModel(version).withTargets(targets), tea.WithAltScreen())
+	p := tea.NewProgram(InitialModel(version).withTargets(targets, exact), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("error running tui: %w", err)
 	}
@@ -398,33 +404,50 @@ func Start(version string, targets []model.Target) error {
 
 // withTargets seeds the initial tab, filter and selection from the CLI
 // targets so `witr -i` opens where a non-interactive run would have looked.
-func (m MainModel) withTargets(targets []model.Target) MainModel {
+// The TUI shows one target of each type; any others are listed in the status
+// line rather than dropped silently.
+func (m MainModel) withTargets(targets []model.Target, exact bool) MainModel {
+	var skipped []string
 	for _, t := range targets {
+		used := false
 		switch t.Type {
 		case model.TargetPID:
 			if pid, err := strconv.Atoi(t.Value); err == nil && m.initialPID == 0 {
 				m.initialPID = pid
+				used = true
 			}
 		case model.TargetName:
 			if m.input.Value() == "" {
 				m.input.SetValue(t.Value)
+				m.exactName = exact
+				used = true
 			}
 		case model.TargetPort:
 			if m.portInput.Value() == "" {
 				m.portInput.SetValue(t.Value)
+				m.exactPort = true
 				m.activeTab = tabPorts
+				used = true
 			}
 		case model.TargetContainer:
 			if m.containerInput.Value() == "" {
 				m.containerInput.SetValue(t.Value)
 				m.activeTab = tabContainers
+				used = true
 			}
 		case model.TargetFile:
 			if locksTabEnabled && m.lockInput.Value() == "" {
 				m.lockInput.SetValue(t.Value)
 				m.activeTab = tabLocks
+				used = true
 			}
 		}
+		if !used {
+			skipped = append(skipped, string(t.Type)+" "+t.Value)
+		}
+	}
+	if len(skipped) > 0 {
+		m.statusMsg = "Interactive mode shows one target of each type; not shown: " + strings.Join(skipped, ", ")
 	}
 	return m
 }

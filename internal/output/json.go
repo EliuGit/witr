@@ -2,16 +2,26 @@ package output
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
-func ToJSON(r model.Result) (string, error) {
-	data, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
+// MarshalJSON renders v as indented JSON without escaping <, > and &, which
+// appear in port mappings and command lines.
+func MarshalJSON(v any) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	return string(data), nil
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+func ToJSON(r model.Result) (string, error) {
+	return MarshalJSON(r)
 }
 
 type shortProcess struct {
@@ -36,11 +46,7 @@ func ToShortJSON(r model.Result) (string, error) {
 	for i, p := range r.Ancestry {
 		ancestry[i] = toShort(p)
 	}
-	data, err := json.MarshalIndent(ancestry, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(ancestry)
 }
 
 func ToTreeJSON(r model.Result) (string, error) {
@@ -64,11 +70,7 @@ func ToTreeJSON(r model.Result) (string, error) {
 		}
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }
 
 func ToWarningsJSON(r model.Result) (string, error) {
@@ -103,11 +105,7 @@ func ToWarningsJSON(r model.Result) (string, error) {
 		Warnings: warnings,
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }
 
 func ToEnvJSON(r model.Result) (string, error) {
@@ -132,9 +130,5 @@ func ToEnvJSON(r model.Result) (string, error) {
 		Env:     r.Process.Env,
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }

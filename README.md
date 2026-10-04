@@ -831,7 +831,7 @@ Non‑blocking observations such as:
 
 AI coding agents (Claude Code, Codex, Cursor and others) regularly run into ports that are already in use, leftover dev servers and confusing containers, and work around them by chaining `lsof`, `ps`, `netstat` and `docker ps`. witr answers the same questions in one command, and two things make it easy for an agent to use:
 
-- **`--json`** prints the full result as a JSON document: the process, its ancestry chain, the source that started it and any warnings.
+- **`--json`** prints the result as JSON: for a process, the full report (the process, its ancestry chain, the source that started it and any warnings). A failed or ambiguous lookup prints `{Target, Error}`, with the candidates in `Matches` when it is ambiguous, and several targets print an array.
 - **Exit codes** say what happened without parsing any text (see [7.2 Exit Codes](#72-exit-codes)). Exit code `1` means the process was found and has warnings; it is not a failure.
 
 Add a short note like this to your project's agent instructions (`AGENTS.md`, `CLAUDE.md` or similar):

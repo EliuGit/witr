@@ -16,6 +16,7 @@ func ResolveAncestry(pid int) ([]model.Process, error) {
 // a PID that couldn't be read no longer exists at all.
 func resolveAncestry(pid int, readProcess func(int) (model.Process, error), gone func(int) bool) ([]model.Process, error) {
 	var chain []model.Process
+	var readErr error
 	seen := make(map[int]bool)
 
 	current := pid
@@ -28,6 +29,9 @@ func resolveAncestry(pid int, readProcess func(int) (model.Process, error), gone
 
 		p, err := readProcess(current)
 		if err != nil {
+			if len(chain) == 0 {
+				readErr = err
+			}
 			// The walk ends here either way, but only a parent that no longer
 			// exists means the one that started the child has exited. One that
 			// exists but can't be read (hidden /proc, another jail) does not.
@@ -63,7 +67,10 @@ func resolveAncestry(pid int, readProcess func(int) (model.Process, error), gone
 	}
 
 	if len(chain) == 0 {
-		return nil, fmt.Errorf("no process ancestry found")
+		if pid > 0 && !gone(pid) {
+			return nil, fmt.Errorf("process %d exists but can't be read (insufficient permissions): %w", pid, readErr)
+		}
+		return nil, fmt.Errorf("process %d does not exist", pid)
 	}
 
 	// Reverse the chain to get root

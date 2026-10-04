@@ -20,9 +20,11 @@ func ReadProcess(pid int) (model.Process, error) {
 	if processExited(pid) {
 		return model.Process{}, fmt.Errorf("process %d does not exist (it has exited)", pid)
 	}
+	// A process that can't be opened still comes back from the system
+	// snapshot, so failing here means it isn't running.
 	info, err := GetProcessDetailedInfo(pid)
 	if err != nil {
-		return model.Process{}, err
+		return model.Process{}, fmt.Errorf("process %d does not exist", pid)
 	}
 
 	name := ""

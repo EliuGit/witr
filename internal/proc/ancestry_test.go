@@ -3,6 +3,7 @@ package proc
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,19 @@ func TestResolveAncestryMarksMissingParent(t *testing.T) {
 
 // allGone treats every unreadable PID as one that no longer exists.
 func allGone(int) bool { return true }
+
+func TestResolveAncestryExplainsUnreadableTarget(t *testing.T) {
+	none := map[int]model.Process{}
+
+	_, err := resolveAncestry(42, processMapReader(none), allGone)
+	if err == nil || !strings.Contains(err.Error(), "process 42 does not exist") {
+		t.Errorf("a missing target should say it does not exist, got %v", err)
+	}
+	_, err = resolveAncestry(42, processMapReader(none), func(int) bool { return false })
+	if err == nil || !strings.Contains(err.Error(), "insufficient permissions") {
+		t.Errorf("a hidden target should say it can't be read, got %v", err)
+	}
+}
 
 func TestResolveAncestryDoesNotClaimHiddenParentExited(t *testing.T) {
 	// The parent exists but can't be read (another user's under a hidden /proc).

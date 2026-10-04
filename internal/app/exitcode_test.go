@@ -1,11 +1,14 @@
 package app
 
 import (
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 // buildWitr compiles the real witr binary once so the process exit codes can be
@@ -46,6 +49,26 @@ func runExit(t *testing.T, bin string, args ...string) int {
 	return -1
 }
 
+func TestJSONFailureIsJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the witr binary; skipped under -short")
+	}
+	bin := buildWitr(t)
+
+	out, err := exec.Command(bin, "--pid", "2147483646", "--json").Output()
+	ee, ok := err.(*exec.ExitError)
+	if !ok || ee.ExitCode() != ExitNotFound {
+		t.Fatalf("exit = %v, want %d", err, ExitNotFound)
+	}
+	var entry struct {
+		Target model.Target
+		Error  string
+	}
+	if err := json.Unmarshal(out, &entry); err != nil || entry.Error == "" || entry.Target.Value != "2147483646" {
+		t.Errorf("stdout should be a {Target, Error} JSON entry, got %q (%v)", out, err)
+	}
+}
+
 func TestExitCodes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the witr binary; skipped under -short")
@@ -65,6 +88,11 @@ func TestExitCodes(t *testing.T) {
 		{"invalid pid (zero)", []string{"--pid", "0"}, ExitInvalidInput},
 		{"invalid port (out of range)", []string{"--port", "70000"}, ExitInvalidInput},
 		{"not found (ghost pid)", []string{"--pid", ghostPID}, ExitNotFound},
+		{"not found with --env", []string{"--pid", ghostPID, "--env"}, ExitNotFound},
+		{"no such container", []string{"--container", "witr-no-such-container"}, ExitNotFound},
+		{"no such container with --env", []string{"--container", "witr-no-such-container", "--env"}, ExitNotFound},
+		{"combined short flags", []string{"-sp", ghostPID}, ExitNotFound},
+		{"attached short flag value", []string{"-p" + ghostPID}, ExitNotFound},
 		// Multi-target exit code is the highest severity among targets, not the
 		// first or last — assert with both orderings of a not-found(2) and an
 		// invalid(4) target.

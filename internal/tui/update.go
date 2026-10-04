@@ -1455,6 +1455,7 @@ func (m MainModel) handleListFilterInput(msg tea.KeyMsg) (MainModel, tea.Cmd, bo
 			} else {
 				var inputCmd tea.Cmd
 				m.portInput, inputCmd = m.portInput.Update(msg)
+				m.exactPort = false
 				m.updatePortTable()
 				m.portTable.SetCursor(0)
 				return m, inputCmd, true
@@ -1476,6 +1477,7 @@ func (m MainModel) handleListFilterInput(msg tea.KeyMsg) (MainModel, tea.Cmd, bo
 			} else {
 				var inputCmd tea.Cmd
 				m.input, inputCmd = m.input.Update(msg)
+				m.exactName = false
 				m.filterProcesses()
 
 				m.table.SetCursor(0)

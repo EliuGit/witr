@@ -272,6 +272,9 @@ func (m *MainModel) filterProcesses() {
 	m.filtered = nil
 	for _, p := range m.processes {
 		match := filter == "" || processMatches(p, filter)
+		if m.exactName && filter != "" {
+			match = strings.EqualFold(p.Command, filter)
+		}
 
 		if match {
 			m.filtered = append(m.filtered, p)
@@ -401,6 +404,8 @@ func (m *MainModel) updatePortTable() {
 		match := false
 		if filter == "" {
 			match = true
+		} else if m.exactPort {
+			match = strconv.Itoa(p.Port) == filter
 		} else {
 			if strings.Contains(fmt.Sprintf("%d", p.Port), filter) ||
 				strings.Contains(strings.ToLower(p.Protocol), filter) ||

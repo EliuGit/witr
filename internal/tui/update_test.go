@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -368,9 +369,40 @@ func TestActionOpenPausesRefreshAndMouse(t *testing.T) {
 	}
 }
 
+func TestWithTargetsMatchExactlyAndListSkipped(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = m.withTargets([]model.Target{
+		{Type: model.TargetPort, Value: "80"},
+		{Type: model.TargetPort, Value: "443"},
+		{Type: model.TargetName, Value: "nginx"},
+	}, true)
+
+	// A seeded port matches exactly: not 8080, nor an fe80:: address.
+	m.ports = []model.OpenPort{
+		{Port: 80, Protocol: "tcp", Address: "0.0.0.0", State: "LISTEN"},
+		{Port: 8080, Protocol: "tcp", Address: "0.0.0.0", State: "LISTEN"},
+		{Port: 22, Protocol: "tcp", Address: "fe80::1", State: "LISTEN"},
+	}
+	m.updatePortTable()
+	if got := len(m.portTable.Rows()); got != 1 {
+		t.Errorf("port rows = %d, want only port 80", got)
+	}
+
+	// With -x, a seeded name matches the process name exactly.
+	m.processes = []model.Process{{PID: 1, Command: "nginx"}, {PID: 2, Command: "nginx-helper"}}
+	m.filterProcesses()
+	if len(m.filtered) != 1 || m.filtered[0].PID != 1 {
+		t.Errorf("filtered = %+v, want only the exact name match", m.filtered)
+	}
+
+	if !strings.Contains(m.statusMsg, "port 443") {
+		t.Errorf("status = %q, want the second port listed as not shown", m.statusMsg)
+	}
+}
+
 func TestWithTargetsSeedsInitialState(t *testing.T) {
 	t.Run("pid target selects that process on first list", func(t *testing.T) {
-		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPID, Value: "2"}})
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPID, Value: "2"}}, false)
 		if m.initialPID != 2 {
 			t.Fatalf("initialPID = %d, want 2", m.initialPID)
 		}
@@ -387,7 +419,7 @@ func TestWithTargetsSeedsInitialState(t *testing.T) {
 	})
 
 	t.Run("name target pre-fills the process filter", func(t *testing.T) {
-		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetName, Value: "nginx"}})
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetName, Value: "nginx"}}, false)
 		m, _ = step(t, m, []model.Process{{PID: 1, Command: "nginx"}, {PID: 2, Command: "redis"}})
 		if len(m.filtered) != 1 || m.filtered[0].Command != "nginx" {
 			t.Errorf("name target should narrow to [nginx], got %v", m.filtered)
@@ -395,7 +427,7 @@ func TestWithTargetsSeedsInitialState(t *testing.T) {
 	})
 
 	t.Run("port target opens the ports tab with the filter set", func(t *testing.T) {
-		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPort, Value: "5432"}})
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPort, Value: "5432"}}, false)
 		if m.activeTab != tabPorts {
 			t.Errorf("activeTab = %v, want tabPorts", m.activeTab)
 		}
@@ -409,14 +441,14 @@ func TestWithTargetsSeedsInitialState(t *testing.T) {
 	})
 
 	t.Run("container target opens the containers tab with the filter set", func(t *testing.T) {
-		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetContainer, Value: "web"}})
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetContainer, Value: "web"}}, false)
 		if m.activeTab != tabContainers || m.containerInput.Value() != "web" {
 			t.Errorf("activeTab = %v, filter = %q", m.activeTab, m.containerInput.Value())
 		}
 	})
 
 	t.Run("no targets leaves defaults", func(t *testing.T) {
-		m := InitialModel("test").withTargets(nil)
+		m := InitialModel("test").withTargets(nil, false)
 		if m.activeTab != tabProcesses || m.initialPID != 0 || m.input.Value() != "" {
 			t.Errorf("unexpected seeded state: tab=%v pid=%d filter=%q", m.activeTab, m.initialPID, m.input.Value())
 		}
