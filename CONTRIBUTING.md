@@ -33,7 +33,7 @@ go build -o witr ./cmd/witr
 ./witr --help  # quick smoke test
 ```
 
-- The `-ldflags` block injects commit/date metadata for `witr --version`.
+- `witr --version` reports the version in `internal/version/VERSION`; release builds add the commit and build date through `-ldflags`.
 - The resulting `witr` binary lands in the repo root.
 
 ## Code of Conduct
@@ -95,6 +95,9 @@ Enhancement suggestions are tracked as [GitHub issues](https://github.com/pransh
 - Use `gofmt` to format your code.
 - Write unit tests for new functionality.
 - Ensure all tests pass: `go test ./...`
+- Changing what witr prints (`internal/output`)? Mirror it in the playground engine (`docs/js/engine.js`), regenerate its fixtures with `go run -tags fixtures ./docs/fixtures/gen` and check them with `node docs/scripts/check-fixtures.mjs`; CI does the same.
+- Adding a `--json` field? Record it with `go test ./internal/app -run TestJSONContract -update` and commit the updated golden file. Renaming, removing or retyping a field breaks the JSON contract.
+- Changing dependencies? Run `go mod tidy && go mod vendor`; CI checks that `vendor/` is in sync.
 
 #### Pull Request Process
 
@@ -127,14 +130,16 @@ GOOS=linux  GOARCH=arm64 go build -v ./cmd/witr
 GOOS=linux  GOARCH=loong64 go build -v ./cmd/witr
 GOOS=darwin GOARCH=amd64 go build -v ./cmd/witr
 GOOS=darwin GOARCH=arm64 go build -v ./cmd/witr
+GOOS=freebsd GOARCH=amd64 go build -v ./cmd/witr
+GOOS=windows GOARCH=amd64 go build -v ./cmd/witr
 ```
 
 **Option 2: Using `act` (Docker required)**
 
 ```bash
 # Run the specific job
-act -j validate
-act -j build
+act -j lint
+act -j test
 
 # Or run the whole workflow for a pull_request event
 act pull_request

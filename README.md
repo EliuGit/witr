@@ -535,7 +535,7 @@ Running `witr` without any arguments or with the `-i` flag launches the **Intera
 
 ### Key Features:
 - **Processes Tab**: Live, sortable, filterable list of all running processes with a side panel showing the ancestry tree of the highlighted process.
-- **Ports Tab**: Open/listening ports with the owning processes attached in a side panel. Toggle between LISTEN-only and ALL with `a`.
+- **Ports Tab**: Open/listening ports with the owning processes attached in a side panel. Toggle between LISTEN-only and ALL with `a`. Enter on an owner opens it, or the container a port is published for; an owner hidden from your user shows the user it runs as (run with sudo to see the process).
 - **Containers Tab**: All running containers across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails in one list - name, image, status, ports, command, plus a per-container detail view with mounts, networks, and compose project metadata.
 - **Locks Tab**: System-wide file locks (POSIX/FLOCK on Linux, lsof-derived on macOS/FreeBSD). Press `a` to switch into "all open files" mode, where locked entries are merged with every interesting open fd; type into `/` to search across the merged set.
 - **Process Details**: Deep-dive into a process to see its full ancestry tree, child processes, environment variables, working directory, sockets, file context, and more.
@@ -817,6 +817,7 @@ Only **one primary source** is selected. If the original parent has exited and n
 - Working directory
 - Git repository name and branch
 - Container name / image (docker, podman, kubernetes, colima, containerd)
+- Sockets: listeners first, each with the number of connections it accepted, then other sockets; a connection shows `local → remote`
 - Public vs private bind
 
 #### Warnings
@@ -929,6 +930,8 @@ For fuller guidance, install the official skill: it tells an agent which command
 | SSH session detection | ✅ | ✅ | ✅ | ✅ | Detects remote IP and terminal. |
 | tmux/screen detection | ✅ | ✅ | ❌ | ✅ | Shows session name in source. |
 | Schedule detection | ✅ | ✅ | ❌ | ❌ | Linux: systemd timers, macOS: launchd intervals/calendar. |
+| Restart count | ✅ | ⚠️ | ⚠️ | ❌ | systemd restarts on Linux; container restart count and policy wherever Docker, Podman, nerdctl or Kubernetes runs. |
+| Exited parent detection | ✅ | ✅ | ⚠️ | ✅ | Marks where the process that started it exited. Windows shows the break but doesn't treat it as a finding (no exit code 6): its launchers routinely exit. |
 | Snap/Flatpak detection | ✅ | ❌ | ❌ | ❌ | |
 | **Health & Diagnostics** |
 | CPU usage detection | ✅ | ✅ | ✅ | ✅ | |
@@ -938,6 +941,7 @@ For fuller guidance, install the official skill: it tells an agent which command
 | File Locks | ✅ | ✅ | ❌ | ✅ | Linux: `/proc/locks`; macOS/FreeBSD: derived from `lsof`/`fstat`. |
 | Deleted binary detection | ✅ | ✅ | ✅ | ✅ | Warns if executable is missing. |
 | Capability warnings | ✅ | ❌ | ❌ | ❌ | Warns about dangerous capabilities on non-root processes. |
+| Security context | ✅ | ❌ | ✅ | ❌ | Linux: AppArmor profile or SELinux context; Windows: integrity level (elevated, system, low). |
 | **Context** |
 | Git repo/branch detection | ✅ | ✅ | ✅ | ✅ | |
 | **Interactive Mode (TUI)** |
@@ -963,6 +967,8 @@ If you are not seeing the expected information, try running witr with sudo:
 ```bash
 sudo witr [your arguments]
 ```
+
+Without root, a port held by another user's process still shows which user it belongs to (`it belongs to postgres`), but not the process. With root, a port that no process on the system holds is reported as such (exit code 2): on WSL that's usually a process in another distro, since all distros share one network.
 
 #### macOS
 
