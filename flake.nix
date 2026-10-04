@@ -45,6 +45,8 @@
             };
 
             vendorHash = null;
+            # The man page generator is a build tool, not something to install.
+            excludedPackages = [ "internal/tools/docgen" ];
             ldflags = [
               "-X github.com/pranshuparmar/witr/internal/version.Version=v${version}"
               "-X github.com/pranshuparmar/witr/internal/version.Commit=${commit}"
