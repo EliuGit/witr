@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
+
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func encodeProcNetTCP6(ip net.IP, port int) string {
@@ -153,5 +156,36 @@ func TestSocketState(t *testing.T) {
 		if got := socketState(tt.proto, tt.hex); got != tt.want {
 			t.Errorf("socketState(%q, %q) = %q, want %q", tt.proto, tt.hex, got, tt.want)
 		}
+	}
+}
+
+// The uid column names the user owning each socket, even when its process is
+// hidden from this user.
+func TestParseProcNet(t *testing.T) {
+	table := `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:1538 00000000:0000 0A 00000000:00000000 00:00000000 00000000   113        0 23417 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:B53C 0100007F:1538 01 00000000:00000000 00:00000000 00000000  1000        0 99001 1 0000000000000000 20 4 30 10 -1
+   2: short line
+`
+	sockets := map[string]model.Socket{}
+	uids := map[string]int{}
+	parseProcNet(strings.NewReader(table), "TCP", false, sockets, uids)
+	if len(sockets) != 2 {
+		t.Fatalf("parsed %d sockets, want 2", len(sockets))
+	}
+	if s := sockets["23417"]; s.Port != 5432 || s.Address != "127.0.0.1" || s.State != "LISTEN" || uids["23417"] != 113 {
+		t.Errorf("listener = %+v, uid %d", s, uids["23417"])
+	}
+	if s := sockets["99001"]; s.RemotePort != 5432 || s.State != "ESTABLISHED" || uids["99001"] != 1000 {
+		t.Errorf("connection = %+v, uid %d", s, uids["99001"])
+	}
+}
+
+func TestUserName(t *testing.T) {
+	if got := UserName(0); got != "root" {
+		t.Errorf("UserName(0) = %q, want root", got)
+	}
+	if got := UserName(987654321); got != "987654321" {
+		t.Errorf("an unlisted uid = %q, want the number", got)
 	}
 }

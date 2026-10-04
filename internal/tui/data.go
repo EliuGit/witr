@@ -154,7 +154,10 @@ func (m MainModel) fetchPublishingContainer(port int, proto string) tea.Cmd {
 		if match := resolvePublishingContainer(port, proto); match != nil {
 			return m.fetchContainerDetail(match)()
 		}
-		return fmt.Errorf("port %d: the process holding it isn't visible to this user", port)
+		if ownersHidden() {
+			return fmt.Errorf("port %d: the process holding it isn't visible; run witr with sudo to see it", port)
+		}
+		return fmt.Errorf("port %d: no process on this system holds it", port)
 	}
 }
 
@@ -554,11 +557,18 @@ func (m *MainModel) updatePortDetailsWithMap(procMap map[int]model.Process) {
 						cmd,
 					})
 				} else if p.PID == 0 {
+					user, note := "-", "owning process not visible"
+					if p.User != "" {
+						user = output.SanitizeTerminalLine(p.User)
+					}
+					if ownersHidden() {
+						note = "run witr with sudo to see it"
+					}
 					rows = append(rows, table.Row{
 						fmt.Sprintf("%8s", "-"),
-						"-",
+						user,
 						"(unknown)",
-						"owning process not visible",
+						note,
 					})
 				} else {
 					rows = append(rows, table.Row{

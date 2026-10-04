@@ -42,7 +42,7 @@ Check the exit code first:
 |------|---------|------------|
 | 0 | Found, no warnings | Report it |
 | 1 | Found, with warnings. Not a failure | Report it and mention the warnings that matter |
-| 2 | Not found | Nothing runs or listens there; say so |
+| 2 | Not found | Nothing on this system runs or listens there; say so. For a port, `Error` may say something outside this system (another WSL distro, a VM) holds it |
 | 3 | Permission denied | It belongs to another user; suggest re-running with `sudo`, and ask first |
 | 4 | Ambiguous or bad input | `Matches` lists the candidates: re-run with `--pid` for the right one, or fix the input |
 | 5 | Internal error | Report the `Error` |

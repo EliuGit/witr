@@ -739,13 +739,29 @@ func handleResolveError(cmd *cobra.Command, outw io.Writer, outp output.Printer,
 		}
 	}
 
-	if ownerUnknown {
-		const ownerUnknown = "socket found but owning process not detected (try sudo)"
+	// Nothing is hidden from root, nor on Windows, which reports every
+	// socket's owner: a socket no process holds is held from outside this
+	// system, and sudo can't help.
+	if ownerUnknown && !ownersHidden() {
+		short := errStr + " (no process on this system holds it)"
 		switch {
 		case flags.json:
-			jsonError(cmd, t, ownerUnknown, multiMode, jsonResults)
+			jsonError(cmd, t, short, multiMode, jsonResults)
 		case multiMode:
-			outp.Printf("Error: %s\n", ownerUnknown)
+			outp.Printf("Error: %s\n", short)
+		default:
+			cmd.PrintErrln(errStr + "\n\n" + heldOutsideHint())
+		}
+		return ExitNotFound
+	}
+
+	if ownerUnknown {
+		short := errStr + " (try sudo)"
+		switch {
+		case flags.json:
+			jsonError(cmd, t, short, multiMode, jsonResults)
+		case multiMode:
+			outp.Printf("Error: %s\n", short)
 		default:
 			errorMsg := fmt.Sprintf("%s\n\nA socket was found for the port, but the owning process could not be detected.\nThis may be due to insufficient permissions. Try running with sudo:\n  sudo %s", errStr, strings.Join(os.Args, " "))
 			cmd.PrintErrln(errorMsg)
@@ -986,6 +1002,31 @@ func analyzeContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t
 	}
 	addSocketInfo(&res, t)
 	return renderResult(outw, res, flags, multiMode, jsonResults), true
+}
+
+// ownersHidden reports whether other users' processes are hidden from witr:
+// Windows reports every socket's owner, elsewhere only root sees them all. A
+// variable for tests.
+var ownersHidden = func() bool {
+	return runtime.GOOS != "windows" && os.Geteuid() != 0
+}
+
+// onWSL reports whether witr runs in a WSL distro. A variable for tests.
+var onWSL = func() bool {
+	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	return err == nil && strings.Contains(strings.ToLower(string(release)), "microsoft")
+}
+
+// heldOutsideHint explains a socket that no process on this system holds.
+func heldOutsideHint() string {
+	if onWSL() {
+		return "No process in this WSL distro holds the socket. WSL distros share one network,\n" +
+			"so it is most likely held by a process in another distro (Docker Desktop runs\n" +
+			"in its own), or by the kernel."
+	}
+	return "No process on this system holds the socket, so it is held from outside it: by a\n" +
+		"process in another PID namespace sharing this network (such as a container\n" +
+		"runtime's VM), or by the kernel."
 }
 
 // containerByPort finds the container publishing a host port; a variable so

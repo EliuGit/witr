@@ -512,8 +512,9 @@ func TestWithTargetsSeedsInitialState(t *testing.T) {
 // from the right-justified cell), and an owner that isn't visible ("-") through
 // the container publishing the port, as --port does.
 func TestPortsTabOpensOwner(t *testing.T) {
-	orig := resolvePublishingContainer
-	defer func() { resolvePublishingContainer = orig }()
+	orig, origHidden := resolvePublishingContainer, ownersHidden
+	defer func() { resolvePublishingContainer, ownersHidden = orig, origHidden }()
+	ownersHidden = func() bool { return true }
 	var asked []any
 	resolvePublishingContainer = func(port int, proto string) *model.ContainerMatch {
 		asked = append(asked, port, proto)
@@ -558,5 +559,28 @@ func TestPortsTabOpensOwner(t *testing.T) {
 	m, _ = step(t, m, msg)
 	if m.state != stateList || !strings.Contains(m.statusMsg, "isn't visible") {
 		t.Errorf("after the lookup: state %v, status %q", m.state, m.statusMsg)
+	}
+}
+
+// The row of a hidden owner names the user its socket belongs to, and says how
+// to see the process when witr isn't running as root.
+func TestPortsTabHiddenOwnerRow(t *testing.T) {
+	orig := ownersHidden
+	defer func() { ownersHidden = orig }()
+	for _, hidden := range []bool{true, false} {
+		ownersHidden = func() bool { return hidden }
+		m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+		m.activeTab = tabPorts
+		m.ports = []model.OpenPort{{Port: 5432, Protocol: "TCP", Address: "127.0.0.1", State: "LISTEN", User: "postgres"}}
+		m.updatePortTable()
+		m.updatePortDetails()
+		row := m.portDetailTable.SelectedRow()
+		want := "owning process not visible"
+		if hidden {
+			want = "run witr with sudo to see it"
+		}
+		if len(row) != 4 || strings.TrimSpace(row[0]) != "-" || row[1] != "postgres" || row[3] != want {
+			t.Errorf("hidden=%v: row %q, want user postgres and %q", hidden, row, want)
+		}
 	}
 }

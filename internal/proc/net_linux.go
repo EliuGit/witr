@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -33,7 +34,7 @@ func readSocketsCached() (map[string]model.Socket, error) {
 		return socketCache, nil
 	}
 
-	sockets, err := readSockets()
+	sockets, _, err := readSockets()
 	if err != nil {
 		return nil, err
 	}
@@ -69,50 +70,57 @@ func socketState(proto, stateHex string) string {
 	return state
 }
 
-func readSockets() (map[string]model.Socket, error) {
+// readSockets reads the system's TCP and UDP sockets by inode, with the uid
+// owning each socket.
+func readSockets() (map[string]model.Socket, map[string]int, error) {
 	sockets := make(map[string]model.Socket)
-
-	parse := func(path, proto string, ipv6 bool) {
-		f, err := os.Open(path)
+	uids := make(map[string]int)
+	for _, t := range []struct {
+		path, proto string
+		ipv6        bool
+	}{
+		{"/proc/net/tcp", "TCP", false},
+		{"/proc/net/tcp6", "TCP6", true},
+		{"/proc/net/udp", "UDP", false},
+		{"/proc/net/udp6", "UDP6", true},
+	} {
+		f, err := os.Open(t.path)
 		if err != nil {
-			return
+			continue
 		}
-		defer f.Close()
+		parseProcNet(f, t.proto, t.ipv6, sockets, uids)
+		_ = f.Close()
+	}
+	return sockets, uids, nil
+}
 
-		scanner := bufio.NewScanner(f)
-		scanner.Scan() // skip header
-
-		for scanner.Scan() {
-			fields := strings.Fields(scanner.Text())
-			if len(fields) < 10 {
-				continue
-			}
-
-			local := fields[1]
-			stateHex := fields[3]
-			inode := fields[9]
-
-			addr, port := parseAddr(local, ipv6)
-			s := model.Socket{
-				Inode:    inode,
-				Port:     port,
-				Address:  addr,
-				State:    socketState(proto, stateHex),
-				Protocol: proto,
-			}
-			if raddr, rport := parseAddr(fields[2], ipv6); rport > 0 {
-				s.RemoteAddress, s.RemotePort = raddr, rport
-			}
-			sockets[inode] = s
+// parseProcNet reads one /proc/net table (sl, local, remote, state, queues,
+// timer, retransmits, uid, timeout, inode, ...) into sockets and uids.
+func parseProcNet(r io.Reader, proto string, ipv6 bool, sockets map[string]model.Socket, uids map[string]int) {
+	scanner := bufio.NewScanner(r)
+	scanner.Scan() // skip header
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 10 {
+			continue
+		}
+		inode := fields[9]
+		addr, port := parseAddr(fields[1], ipv6)
+		s := model.Socket{
+			Inode:    inode,
+			Port:     port,
+			Address:  addr,
+			State:    socketState(proto, fields[3]),
+			Protocol: proto,
+		}
+		if raddr, rport := parseAddr(fields[2], ipv6); rport > 0 {
+			s.RemoteAddress, s.RemotePort = raddr, rport
+		}
+		sockets[inode] = s
+		if uid, err := strconv.Atoi(fields[7]); err == nil {
+			uids[inode] = uid
 		}
 	}
-
-	parse("/proc/net/tcp", "TCP", false)
-	parse("/proc/net/tcp6", "TCP6", true)
-	parse("/proc/net/udp", "UDP", false)
-	parse("/proc/net/udp6", "UDP6", true)
-
-	return sockets, nil
 }
 
 func parseAddr(raw string, ipv6 bool) (string, int) {
@@ -157,7 +165,7 @@ func parseAddr(raw string, ipv6 bool) (string, int) {
 }
 
 func ListOpenPorts() ([]model.OpenPort, error) {
-	sockets, err := readSockets()
+	sockets, uids, err := readSockets()
 	if err != nil {
 		return nil, err
 	}
@@ -209,19 +217,23 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 	}
 
 	// Another user's process hides its fds from an unprivileged reader, but its
-	// sockets are still in /proc/net: list them with no owner (PID 0) rather
-	// than dropping them. Inode 0 means no process owns the socket at all
-	// (e.g. TIME_WAIT).
+	// sockets are still in /proc/net, with the user owning them: list them with
+	// no owner process (PID 0) rather than dropping them. Inode 0 means no
+	// process owns the socket at all (e.g. TIME_WAIT).
 	for inode, s := range sockets {
 		if inode == "0" || owned[inode] {
 			continue
 		}
-		openPorts = append(openPorts, model.OpenPort{
+		op := model.OpenPort{
 			Port:     s.Port,
 			Address:  s.Address,
 			Protocol: s.Protocol,
 			State:    s.State,
-		})
+		}
+		if uid, ok := uids[inode]; ok {
+			op.User = UserName(uid)
+		}
+		openPorts = append(openPorts, op)
 	}
 	return openPorts, nil
 }

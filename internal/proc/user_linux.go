@@ -48,12 +48,15 @@ func readUser(pid int) string {
 		return "unknown"
 	}
 
-	uid := int(stat.Uid)
+	return UserName(int(stat.Uid))
+}
 
+// UserName returns the name of the user with uid, or the uid itself when
+// /etc/passwd doesn't list it.
+func UserName(uid int) string {
 	userCacheOnce.Do(func() {
 		userCache = loadUserCache()
 	})
-
 	if name, ok := userCache[uid]; ok {
 		return name
 	}

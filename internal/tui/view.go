@@ -196,8 +196,7 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 			filterStatus = "ALL"
 		}
 		hint := ""
-		// Windows reports every socket's owner; elsewhere other users' are hidden.
-		if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		if ownersHidden() {
 			hint = " (use sudo to see all owners)"
 		}
 		helpText = fmt.Sprintf("Total: %d [%s]%s | p/t/n/s: Sort | a: Toggle All | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.portTable.Rows()), filterStatus, hint)
@@ -489,4 +488,11 @@ func (m MainModel) viewProcessDetail(outerStyle lipgloss.Style) string {
 			footerStyle.Width(m.width-4).Render(footerContent),
 		),
 	)
+}
+
+// ownersHidden reports whether other users' processes are hidden from witr:
+// Windows reports every socket's owner, elsewhere only root sees them all. A
+// variable for tests.
+var ownersHidden = func() bool {
+	return runtime.GOOS != "windows" && os.Geteuid() != 0
 }

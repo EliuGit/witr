@@ -751,8 +751,8 @@ witr returns meaningful exit codes for use in scripts, CI pipelines, and monitor
 |------|---------|
 | 0 | Clean: process found, no warnings |
 | 1 | Warnings: process found but has one or more warnings |
-| 2 | Not found: no matching process or service |
-| 3 | Permission denied: insufficient privileges |
+| 2 | Not found: no matching process or service (also a port no process on this system holds, when witr runs as root or on Windows) |
+| 3 | Permission denied: insufficient privileges (retry with sudo) |
 | 4 | Invalid input: bad arguments or ambiguous match |
 | 5 | Internal error: an unexpected failure occurred |
 | 6 | Cause unknown: process found, but what started it can't be traced (its warnings say why). Not used on Windows, where this is routine |
