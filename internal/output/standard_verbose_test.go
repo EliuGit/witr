@@ -52,7 +52,7 @@ func TestRenderStandardColoredVerbose(t *testing.T) {
 
 	for _, want := range []string{
 		"CPU", "Energy", "Thermal", "Memory", "Virtual", "Resident", "Shared",
-		"I/O Statistics", "Open Files", "Locks", "File Descriptors", "/var/log/nginx.log",
+		"I/O Statistics", "Open Files", "Locks", fdLabel(), "/var/log/nginx.log",
 		"Socket", "waiting for delayed packets", "Threads", "Children", "worker",
 		"Warnings", "running as root",
 	} {
@@ -69,7 +69,7 @@ func TestRenderStandardPlainVerbose(t *testing.T) {
 
 	for _, want := range []string{
 		"CPU (avg)   :", "Memory:", "I/O Statistics", "Open Files  :",
-		"File Descriptors:", "Socket      :", "Threads: 4", "Children of nginx",
+		fdLabel() + ":", "Socket      :", "Threads: 4", "Children of nginx",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plain+verbose output missing %q\n---\n%s", want, out)
@@ -99,4 +99,10 @@ func TestRenderStandardVerboseAltBranches(t *testing.T) {
 			t.Errorf("alt-branch verbose output missing %q\n---\n%s", want, out)
 		}
 	}
+}
+
+// fdLabel is the descriptor heading the report uses on this platform.
+func fdLabel() string {
+	label, _ := fdSummary(model.Process{})
+	return label
 }

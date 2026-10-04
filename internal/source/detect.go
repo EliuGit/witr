@@ -76,9 +76,22 @@ func forOrphan(src model.Source, ancestry []model.Process) model.Source {
 		src.Description = adoptedByInitDescription
 		return src
 	case !explainsOrphan(src, ancestry[cut:]):
-		return model.Source{Type: model.SourceUnknown, Description: orphanedDescription}
+		return model.Source{Type: model.SourceUnknown, Description: orphanDescription(ancestry, cut)}
 	}
 	return src
+}
+
+// orphanDescription explains an unknown source whose chain was cut where the
+// process that started the target exited. With nothing above the cut (Windows
+// doesn't reparent orphans), nothing adopted it either.
+func orphanDescription(ancestry []model.Process, cut int) string {
+	switch {
+	case cut > 0:
+		return orphanedDescription
+	case ancestry[0].PPID > 0:
+		return fmt.Sprintf("The process that started it (pid %d) has exited", ancestry[0].PPID)
+	}
+	return "The process that started it has exited"
 }
 
 // parentExitedAt returns the index of the last process in the chain whose

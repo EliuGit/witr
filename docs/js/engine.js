@@ -394,8 +394,11 @@ export class Engine {
     o += '\n';
 
     if (proc.user && proc.user !== 'unknown') {
-      o += color ? `${ESC.blue}User${ESC.reset}        : ${proc.user}\n` : `User        : ${proc.user}\n`;
+      const user = proc.user + integrityNote(proc.integrityLevel);
+      o += color ? `${ESC.blue}User${ESC.reset}        : ${user}\n` : `User        : ${user}\n`;
     }
+    const security = securityLabel(proc);
+    if (security) o += color ? `${ESC.blue}Security${ESC.reset}    : ${security}\n` : `Security    : ${security}\n`;
     if (proc.container) {
       o += color ? `${ESC.blue}Container${ESC.reset}   : ${proc.container}\n` : `Container   : ${proc.container}\n`;
     }
@@ -500,9 +503,9 @@ export class Engine {
   renderVerbose(r, proc, color, target) {
     let o = '\n';
 
-    if (proc.memory && proc.memory.vms > 0) {
+    if (proc.memory && (proc.memory.vms > 0 || proc.memory.rss > 0)) {
       o += color ? `\n${ESC.green}Memory${ESC.reset}:\n` : `\nMemory:\n`;
-      o += `  Virtual  : ${formatBytes(proc.memory.vms)}\n`;
+      if (proc.memory.vms > 0) o += `  Virtual  : ${formatBytes(proc.memory.vms)}\n`;
       o += `  Resident : ${formatBytes(proc.memory.rss)}\n`;
       if (proc.memory.shared > 0) o += `  Shared   : ${formatBytes(proc.memory.shared)}\n`;
     }
@@ -801,6 +804,18 @@ function renderContainerFallback(label, m, color, verbose, engine) {
     ? `\n${ESC.dimYellow}Note${ESC.reset}        : The owning process is not visible in this environment.\n`
     : `\nNote        : The owning process is not visible in this environment.\n`;
   return o;
+}
+
+// integrityNote and securityLabel mirror the output helpers of the same name.
+function integrityNote(level) {
+  if (!level || level === 'Medium') return '';
+  if (level === 'High') return ' (elevated)';
+  return ` (${level.toLowerCase()} integrity)`;
+}
+
+function securityLabel(p) {
+  if (!p.securityLabel || p.securityLabel.includes('unconfined')) return '';
+  return `${p.securityModule} ${p.securityLabel}`;
 }
 
 // restartsValue mirrors output.restartsValue: a restart count, with a

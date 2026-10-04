@@ -786,6 +786,8 @@ What the user asked about.
 
 Executable, PID, user, command, start time and restart count. The restart count comes from the managing system: a systemd unit, or the container runtime (Docker, Podman, nerdctl and Kubernetes), which also shows the container's restart policy, e.g. `Restarts : 12 (policy: unless-stopped)`.
 
+On Windows the user carries the process's integrity level when it isn't the normal Medium: `(elevated)` for a process run as administrator, `(system integrity)`, `(low integrity)` or `(untrusted integrity)` for sandboxed ones. On Linux, a `Security` line shows the AppArmor profile or SELinux context confining the process; unconfined processes have none.
+
 #### Why It Exists
 
 A causal ancestry chain showing how the process came to exist.

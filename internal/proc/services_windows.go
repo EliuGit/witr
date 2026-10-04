@@ -4,6 +4,7 @@ package proc
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,7 +46,7 @@ type enumServiceStatusProcessW struct {
 
 // serviceTable is one scan of the installed Windows services.
 type serviceTable struct {
-	byPID   map[int]string    // running service PID → service name
+	byPID   map[int]string    // running service PID → its serviceLabel
 	display map[string]string // lower-cased service name → display name
 }
 
@@ -56,8 +57,8 @@ var (
 	serviceMapCacheTTL  = 2 * time.Second
 )
 
-// serviceMapForPIDs returns a PID → service-name map for every running
-// Windows service.
+// serviceMapForPIDs returns PID → the service each running service host
+// stands for (see serviceLabel).
 func serviceMapForPIDs() (map[int]string, error) {
 	t, err := scanServices()
 	if err != nil {
@@ -131,6 +132,7 @@ func scanServices() (*serviceTable, error) {
 	}
 
 	t := &serviceTable{byPID: make(map[int]string, count), display: make(map[string]string, count)}
+	hosted := make(map[int][]string)
 	entrySize := unsafe.Sizeof(enumServiceStatusProcessW{})
 	base := unsafe.Pointer(&buf[0])
 	for i := uintptr(0); i < uintptr(count); i++ {
@@ -145,16 +147,31 @@ func scanServices() (*serviceTable, error) {
 			// Service registered but not currently running.
 			continue
 		}
-		// First writer wins so share-process hosts (svchost.exe) keep a
-		// stable name across calls.
-		if _, exists := t.byPID[pid]; !exists {
-			t.byPID[pid] = name
-		}
+		hosted[pid] = append(hosted[pid], name)
+	}
+	for pid, names := range hosted {
+		t.byPID[pid] = serviceLabel(names)
 	}
 
 	serviceMapCache = t
 	serviceMapCacheTime = time.Now()
 	return t, nil
+}
+
+// serviceLabel names the service a host process stands for: its only
+// service; DcomLaunch when a shared host runs it, since that service starts
+// COM servers and packaged apps, the host's usual children; otherwise every
+// service the host runs, as no single one can be credited.
+func serviceLabel(names []string) string {
+	if len(names) == 1 {
+		return names[0]
+	}
+	if slices.Contains(names, "DcomLaunch") {
+		return "DcomLaunch"
+	}
+	sorted := slices.Clone(names)
+	slices.Sort(sorted)
+	return strings.Join(sorted, ", ")
 }
 
 // utf16PtrToString converts a null-terminated UTF-16 pointer to a Go string.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,10 +126,18 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 	}
 	out.Println("")
 	if proc.User != "" && proc.User != "unknown" {
+		user := proc.User + integrityNote(proc.IntegrityLevel)
 		if colorEnabled {
-			out.Printf("%sUser%s        : %s\n", ColorBlue, ColorReset, proc.User)
+			out.Printf("%sUser%s        : %s\n", ColorBlue, ColorReset, user)
 		} else {
-			out.Printf("User        : %s\n", proc.User)
+			out.Printf("User        : %s\n", user)
+		}
+	}
+	if label := securityLabel(proc); label != "" {
+		if colorEnabled {
+			out.Printf("%sSecurity%s    : %s\n", ColorBlue, ColorReset, label)
+		} else {
+			out.Printf("Security    : %s\n", label)
 		}
 	}
 
@@ -404,10 +413,12 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		}
 
 		// Memory information
-		if proc.Memory.VMS > 0 {
+		if proc.Memory.VMS > 0 || proc.Memory.RSS > 0 {
 			if colorEnabled {
 				out.Printf("\n%sMemory%s:\n", ColorGreen, ColorReset)
-				out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				if proc.Memory.VMS > 0 {
+					out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				}
 				out.Printf("  Resident : %s\n", formatBytes(proc.Memory.RSS))
 				if r.ResourceContext != nil && r.ResourceContext.MemoryUsage > 0 {
 					out.Printf("  Private  : %s\n", formatBytes(r.ResourceContext.MemoryUsage))
@@ -417,7 +428,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 				}
 			} else {
 				out.Printf("\nMemory:\n")
-				out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				if proc.Memory.VMS > 0 {
+					out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				}
 				out.Printf("  Resident : %s\n", formatBytes(proc.Memory.RSS))
 				if r.ResourceContext != nil && r.ResourceContext.MemoryUsage > 0 {
 					out.Printf("  Private  : %s\n", formatBytes(r.ResourceContext.MemoryUsage))
@@ -513,12 +526,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 				return fdI < fdJ
 			})
 
+			label, count := fdSummary(proc)
 			if colorEnabled {
-				if proc.FDLimit == 0 {
-					out.Printf("\n%sFile Descriptors%s: %d/unlimited\n", ColorGreen, ColorReset, proc.FDCount)
-				} else {
-					out.Printf("\n%sFile Descriptors%s: %d/%d\n", ColorGreen, ColorReset, proc.FDCount, proc.FDLimit)
-				}
+				out.Printf("\n%s%s%s: %s\n", ColorGreen, label, ColorReset, count)
 				if len(proc.FileDescs) > 0 && len(proc.FileDescs) <= MaxDisplayItems {
 					for _, fd := range proc.FileDescs {
 						safeFd := SanitizeTerminalLine(fd)
@@ -535,11 +545,7 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 					out.Printf("  ... and %d more\n", len(proc.FileDescs)-MaxDisplayItems)
 				}
 			} else {
-				if proc.FDLimit == 0 {
-					out.Printf("\nFile Descriptors: %d/unlimited\n", proc.FDCount)
-				} else {
-					out.Printf("\nFile Descriptors: %d/%d\n", proc.FDCount, proc.FDLimit)
-				}
+				out.Printf("\n%s: %s\n", label, count)
 				if len(proc.FileDescs) > 0 && len(proc.FileDescs) <= MaxDisplayItems {
 					for _, fd := range proc.FileDescs {
 						out.Printf("  %s\n", SanitizeTerminal(fd))
@@ -608,6 +614,40 @@ func formatBytes(n uint64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// fdSummary labels and counts a process's open descriptors: file descriptors
+// against their limit, or on Windows handles, which have no per-process limit
+// worth showing.
+func fdSummary(p model.Process) (label, count string) {
+	switch {
+	case runtime.GOOS == "windows":
+		return "Handles", strconv.Itoa(p.FDCount)
+	case p.FDLimit == 0:
+		return "File Descriptors", fmt.Sprintf("%d/unlimited", p.FDCount)
+	}
+	return "File Descriptors", fmt.Sprintf("%d/%d", p.FDCount, p.FDLimit)
+}
+
+// integrityNote describes a Windows integrity level other than the normal
+// Medium, for the User line: " (elevated)" for High.
+func integrityNote(level string) string {
+	switch level {
+	case "", "Medium":
+		return ""
+	case "High":
+		return " (elevated)"
+	}
+	return " (" + strings.ToLower(SanitizeTerminalLine(level)) + " integrity)"
+}
+
+// securityLabel renders the Linux security module confining a process, or ""
+// when the process is unconfined (most are) or no module is active.
+func securityLabel(p model.Process) string {
+	if p.SecurityLabel == "" || strings.Contains(p.SecurityLabel, "unconfined") {
+		return ""
+	}
+	return SanitizeTerminalLine(p.SecurityModule + " " + p.SecurityLabel)
 }
 
 // formatSocket renders one row of the Sockets section as

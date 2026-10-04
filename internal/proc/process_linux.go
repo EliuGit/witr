@@ -285,6 +285,8 @@ func ReadProcess(pid int) (model.Process, error) {
 		container = resolveDockerProxyContainer(cmdline)
 	}
 
+	securityModule, securityLabel := readSecurityLabel("", pid)
+
 	return model.Process{
 		PID:              pid,
 		PPID:             ppid,
@@ -309,6 +311,8 @@ func ReadProcess(pid int) (model.Process, error) {
 		Env:              env,
 		ExeDeleted:       isBinaryDeleted(pid),
 		Capabilities:     ReadCapabilities(pid),
+		SecurityModule:   securityModule,
+		SecurityLabel:    securityLabel,
 	}, nil
 }
 

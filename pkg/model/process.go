@@ -53,6 +53,16 @@ type Process struct {
 	// Linux capabilities (e.g., CAP_NET_BIND_SERVICE, CAP_SYS_ADMIN)
 	Capabilities []string `json:",omitempty"`
 
+	// The Linux security module confining the process (AppArmor or SELinux)
+	// and its label: a profile such as "/usr/sbin/cupsd (enforce)", or a
+	// context such as "system_u:system_r:httpd_t:s0".
+	SecurityModule string `json:",omitempty"`
+	SecurityLabel  string `json:",omitempty"`
+
+	// Windows integrity level: Untrusted, Low, Medium, High (elevated),
+	// System or Protected.
+	IntegrityLevel string `json:",omitempty"`
+
 	// Extended information for verbose output
 	Memory      MemoryInfo `json:",omitempty"`
 	IO          IOStats    `json:",omitempty"`

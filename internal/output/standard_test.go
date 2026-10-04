@@ -1,7 +1,9 @@
 package output
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -227,5 +229,38 @@ func TestSortSocketsStableWithinSameRank(t *testing.T) {
 	sortSockets(in)
 	if in[0].Port != 8000 {
 		t.Errorf("expected lower port first within same address; got %+v", in)
+	}
+}
+
+// A Windows integrity level other than Medium and a confining Linux security
+// label show on the report; unconfined processes say nothing.
+func TestIntegrityAndSecurityLabel(t *testing.T) {
+	t.Parallel()
+	for level, want := range map[string]string{"": "", "Medium": "", "High": " (elevated)", "System": " (system integrity)", "Low": " (low integrity)"} {
+		if got := integrityNote(level); got != want {
+			t.Errorf("integrityNote(%q) = %q, want %q", level, got, want)
+		}
+	}
+	tests := []struct {
+		module, label, want string
+	}{
+		{"AppArmor", "/usr/sbin/cupsd (enforce)", "AppArmor /usr/sbin/cupsd (enforce)"},
+		{"AppArmor", "unconfined", ""},
+		{"SELinux", "system_u:system_r:httpd_t:s0", "SELinux system_u:system_r:httpd_t:s0"},
+		{"SELinux", "unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023", ""},
+		{"", "", ""},
+	}
+	for _, tt := range tests {
+		if got := securityLabel(model.Process{SecurityModule: tt.module, SecurityLabel: tt.label}); got != tt.want {
+			t.Errorf("securityLabel(%q, %q) = %q, want %q", tt.module, tt.label, got, tt.want)
+		}
+	}
+	var b bytes.Buffer
+	httpd := model.Process{PID: 7, Command: "httpd", User: "apache", SecurityModule: "SELinux", SecurityLabel: "system_u:system_r:httpd_t:s0", IntegrityLevel: "High"}
+	RenderStandard(&b, model.Result{Process: httpd, Ancestry: []model.Process{httpd}}, false, false)
+	for _, want := range []string{"User        : apache (elevated)", "Security    : SELinux system_u:system_r:httpd_t:s0"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("report missing %q:\n%s", want, b.String())
+		}
 	}
 }

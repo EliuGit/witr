@@ -22,6 +22,7 @@ Ancestry[].IO.ReadBytes number
 Ancestry[].IO.ReadOps number
 Ancestry[].IO.WriteBytes number
 Ancestry[].IO.WriteOps number
+Ancestry[].IntegrityLevel string
 Ancestry[].Memory.Data number
 Ancestry[].Memory.Dirty number
 Ancestry[].Memory.Lib number
@@ -36,6 +37,8 @@ Ancestry[].MemoryRSS number
 Ancestry[].PID number
 Ancestry[].PPID number
 Ancestry[].ParentExited bool
+Ancestry[].SecurityLabel string
+Ancestry[].SecurityModule string
 Ancestry[].Service string
 Ancestry[].Sockets[].Address string
 Ancestry[].Sockets[].Inode string
@@ -71,6 +74,7 @@ Children[].IO.ReadBytes number
 Children[].IO.ReadOps number
 Children[].IO.WriteBytes number
 Children[].IO.WriteOps number
+Children[].IntegrityLevel string
 Children[].Memory.Data number
 Children[].Memory.Dirty number
 Children[].Memory.Lib number
@@ -85,6 +89,8 @@ Children[].MemoryRSS number
 Children[].PID number
 Children[].PPID number
 Children[].ParentExited bool
+Children[].SecurityLabel string
+Children[].SecurityModule string
 Children[].Service string
 Children[].Sockets[].Address string
 Children[].Sockets[].Inode string
@@ -142,6 +148,7 @@ Process.IO.ReadBytes number
 Process.IO.ReadOps number
 Process.IO.WriteBytes number
 Process.IO.WriteOps number
+Process.IntegrityLevel string
 Process.Memory.Data number
 Process.Memory.Dirty number
 Process.Memory.Lib number
@@ -156,6 +163,8 @@ Process.MemoryRSS number
 Process.PID number
 Process.PPID number
 Process.ParentExited bool
+Process.SecurityLabel string
+Process.SecurityModule string
 Process.Service string
 Process.Sockets[].Address string
 Process.Sockets[].Inode string

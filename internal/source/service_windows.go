@@ -3,6 +3,7 @@
 package source
 
 import (
+	"fmt"
 	"strings"
 
 	procpkg "github.com/pranshuparmar/witr/internal/proc"
@@ -23,19 +24,23 @@ func detectWindowsService(ancestry []model.Process) *model.Source {
 	for i := len(ancestry) - 1; i >= 0; i-- {
 		p := ancestry[i]
 		if p.Service != "" {
-			registryKey := `HKLM\SYSTEM\CurrentControlSet\Services\` + p.Service
-			description := serviceDescription(p.Service)
-
-			return &model.Source{
-				Type:        model.SourceWindowsService,
-				Name:        p.Service,
-				Description: description,
-				UnitFile:    registryKey,
+			src := &model.Source{
+				Type: model.SourceWindowsService,
+				Name: p.Service,
 				Details: map[string]string{
 					"manager": "services.exe",
 					"service": p.Service,
 				},
 			}
+			if strings.Contains(p.Service, ", ") {
+				// A shared host runs several services; no one of them alone
+				// started what runs under it.
+				src.Description = fmt.Sprintf("Shared service host (%s, pid %d)", p.Command, p.PID)
+			} else {
+				src.Description = serviceDescription(p.Service)
+				src.UnitFile = `HKLM\SYSTEM\CurrentControlSet\Services\` + p.Service
+			}
+			return src
 		}
 	}
 

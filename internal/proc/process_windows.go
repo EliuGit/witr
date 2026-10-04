@@ -50,28 +50,30 @@ func ReadProcess(pid int) (model.Process, error) {
 	// figure shown in the verbose report (ResourceContext) so every output mode
 	// reports the same value.
 	rss, cpu, cpuTime, _ := windowsProcMetrics(pid)
+	user, integrity := readTokenInfo(pid)
 
 	return model.Process{
-		PID:           pid,
-		PPID:          info.PPID,
-		Command:       name,
-		Cmdline:       info.CommandLine,
-		Exe:           info.Exe,
-		StartedAt:     info.StartedAt,
-		User:          readUser(pid),
-		CPUPercent:    cpu,
-		MemoryRSS:     rss,
-		MemoryPercent: windowsMemoryPercent(rss),
-		WorkingDir:    info.Cwd,
-		GitRepo:       gitRepo,
-		GitBranch:     gitBranch,
-		Sockets:       procSockets,
-		Health:        windowsHealth(rss, cpuTime),
-		Forked:        "unknown",
-		Env:           info.Env,
-		Service:       serviceName,
-		Container:     container,
-		ExeDeleted:    isWindowsBinaryDeleted(info.Exe),
+		PID:            pid,
+		PPID:           info.PPID,
+		Command:        name,
+		Cmdline:        info.CommandLine,
+		Exe:            info.Exe,
+		StartedAt:      info.StartedAt,
+		User:           user,
+		IntegrityLevel: integrity,
+		CPUPercent:     cpu,
+		MemoryRSS:      rss,
+		MemoryPercent:  windowsMemoryPercent(rss),
+		WorkingDir:     info.Cwd,
+		GitRepo:        gitRepo,
+		GitBranch:      gitBranch,
+		Sockets:        procSockets,
+		Health:         windowsHealth(rss, cpuTime),
+		Forked:         "unknown",
+		Env:            info.Env,
+		Service:        serviceName,
+		Container:      container,
+		ExeDeleted:     isWindowsBinaryDeleted(info.Exe),
 	}, nil
 }
 
