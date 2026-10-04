@@ -832,7 +832,29 @@ Non‑blocking observations such as:
 
 ---
 
-### 7.4 Using witr with AI Coding Agents
+### 7.4 JSON Output
+
+`--json` is meant for scripts and tools, and its output is a contract:
+
+- **Stable:** field names, what they mean, and their types. Releases may add fields, so ignore any you don't recognise.
+- **Not part of the contract:** field order, whitespace, and the wording of human-readable text (`Error`, `Note`, `Description` and warning messages). Match on fields and exit codes, not on sentences.
+- **Empty values** may be `null`, an empty list, or left out.
+- **Breaking changes** (renaming, removing or retyping a field) only ship in a release whose notes call them out.
+
+| Command | Output |
+|---------|--------|
+| `witr <target> --json` | The full report: `Target`, `Process`, `Ancestry`, `Source`, `Warnings` and the rest |
+| `--short --json` | A list of `{PID, Command}` from the top of the chain to the process, with `PPID` and `ParentExited` where the process that started it has exited |
+| `--tree --json` | `{Ancestry, Children}`, each a list of the same entries |
+| `--warnings --json` | `{PID, Process, Command, Warnings}` |
+| `--env --json` | `{PID, Process, Command, Env}` |
+| A container whose processes aren't visible | `{Target, Runtime, ContainerID, ContainerName, Image, …, Note}` |
+| A failed lookup | `{Target, Error}`, plus `Matches` when the target was ambiguous |
+| Several targets | A list of the above, one entry per target, in the order given |
+
+A test pins every field of every shape, so an accidental rename fails the build.
+
+### 7.5 Using witr with AI Coding Agents
 
 AI coding agents (Claude Code, Codex, Cursor and others) regularly run into ports that are already in use, leftover dev servers and confusing containers, and work around them by chaining `lsof`, `ps`, `netstat` and `docker ps`. witr answers the same questions in one command, and two things make it easy for an agent to use:
 
