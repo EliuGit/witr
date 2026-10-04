@@ -88,14 +88,16 @@ func TestJSONContract(t *testing.T) {
 		}
 		return
 	}
-	want, err := os.ReadFile(golden)
+	data, err := os.ReadFile(golden)
 	if err != nil {
 		t.Fatalf("%v (run with -update to create it)", err)
 	}
-	if got == string(want) {
+	// A Windows checkout may convert the golden file to CRLF line endings.
+	want := strings.ReplaceAll(string(data), "\r\n", "\n")
+	if got == want {
 		return
 	}
-	gotFields, wantFields := contractFields(got), contractFields(string(want))
+	gotFields, wantFields := contractFields(got), contractFields(want)
 	for _, f := range wantFields {
 		if !slices.Contains(gotFields, f) {
 			t.Errorf("removed or changed, a breaking change: %s", f)
