@@ -32,3 +32,12 @@ func TestFormatStartedAt(t *testing.T) {
 		}
 	}
 }
+
+// Runtimes report UTC; the absolute time shows in local time like every other.
+func TestFormatStartedAtUsesLocalTime(t *testing.T) {
+	ts := time.Date(2026, 10, 4, 9, 0, 0, 0, time.FixedZone("far", 13*3600))
+	_, abs := FormatStartedAt(ts)
+	if want := ts.Local().Format("Mon 2006-01-02 15:04:05 -07:00"); abs != want {
+		t.Errorf("FormatStartedAt = %q, want local time %q", abs, want)
+	}
+}

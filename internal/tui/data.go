@@ -117,9 +117,10 @@ func (m MainModel) fetchContainerDetail(match *model.ContainerMatch) tea.Cmd {
 func (m MainModel) fetchTree(p model.Process) tea.Cmd {
 	return func() tea.Msg {
 		res, err := pipeline.AnalyzePID(pipeline.AnalyzeConfig{
-			PID:     p.PID,
-			Verbose: false,
-			Tree:    true,
+			PID:                  p.PID,
+			Verbose:              false,
+			Tree:                 true,
+			SkipContainerDetails: true,
 		})
 		if err != nil {
 			return treeMsg(model.Result{
@@ -128,6 +129,80 @@ func (m MainModel) fetchTree(p model.Process) tea.Cmd {
 		}
 		return treeMsg(res)
 	}
+}
+
+// fetchPortOwnerDetail opens what explains a port's owner: the container
+// whose port it publishes (docker-proxy, Docker Desktop), as --port does, or
+// else the process itself.
+func (m MainModel) fetchPortOwnerDetail(pid, port int) tea.Cmd {
+	return func() tea.Msg {
+		if match, _ := proc.PublishedContainer(port, []int{pid}); match != nil {
+			return m.fetchContainerDetail(match)()
+		}
+		return m.fetchProcessDetail(pid)()
+	}
+}
+
+// resolvePublishingContainer finds the container publishing a host port.
+var resolvePublishingContainer = proc.ResolveContainerByPort
+
+// fetchPublishingContainer opens the container publishing a port whose owning
+// process isn't visible (Docker Desktop holds published ports out of sight),
+// as --port does.
+func (m MainModel) fetchPublishingContainer(port int, proto string) tea.Cmd {
+	return func() tea.Msg {
+		if match := resolvePublishingContainer(port, proto); match != nil {
+			return m.fetchContainerDetail(match)()
+		}
+		if ownersHidden() {
+			return fmt.Errorf("port %d: the process holding it isn't visible; run witr with sudo to see it", port)
+		}
+		return fmt.Errorf("port %d: no process on this system holds it", port)
+	}
+}
+
+// openPortOwner opens the selected owner row of the selected port. The row of
+// an owner that isn't visible ("-") opens the container publishing the port,
+// if any. ok is false when the row has nothing to open.
+func (m MainModel) openPortOwner() (MainModel, tea.Cmd, bool) {
+	row := m.portDetailTable.SelectedRow()
+	if len(row) == 0 {
+		return m, nil, false
+	}
+	var cmd tea.Cmd
+	pid := 0
+	fmt.Sscanf(row[0], "%d", &pid)
+	port := m.selectedPortNumber()
+	switch {
+	case pid > 0:
+		cmd = m.fetchPortOwnerDetail(pid, port)
+	case strings.TrimSpace(row[0]) == "-" && port > 0:
+		cmd = m.fetchPublishingContainer(port, m.selectedPortProtocol())
+	default:
+		return m, nil, false
+	}
+	m.state = stateDetail
+	m.viewport.GotoTop()
+	m.envViewport.GotoTop()
+	return m, cmd, true
+}
+
+// selectedPortProtocol returns the protocol family of the selected Ports-tab
+// row ("tcp" or "udp"), or "".
+func (m MainModel) selectedPortProtocol() string {
+	if row := m.portTable.SelectedRow(); len(row) > 1 {
+		return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(row[1])), "6")
+	}
+	return ""
+}
+
+// selectedPortNumber returns the port of the selected Ports-tab row, or 0.
+func (m MainModel) selectedPortNumber() int {
+	port := 0
+	if row := m.portTable.SelectedRow(); len(row) > 0 {
+		fmt.Sscanf(row[0], "%d", &port)
+	}
+	return port
 }
 
 func (m MainModel) fetchProcessDetail(pid int) tea.Cmd {
@@ -271,10 +346,13 @@ func (m *MainModel) filterProcesses() {
 	m.filtered = nil
 	for _, p := range m.processes {
 		match := filter == "" || processMatches(p, filter)
+		if m.exactName && filter != "" {
+			match = strings.EqualFold(p.Command, filter)
+		}
 
 		if match {
 			m.filtered = append(m.filtered, p)
-			startedStr := p.StartedAt.Format("Jan 02 15:04:05")
+			startedStr := p.StartedAt.Local().Format("Jan 02 15:04:05")
 			if p.StartedAt.IsZero() {
 				startedStr = ""
 			}
@@ -283,7 +361,7 @@ func (m *MainModel) filterProcesses() {
 				fmt.Sprintf("%8d", p.PID),
 				output.SanitizeTerminalLine(p.User),
 				truncateMiddle(output.SanitizeTerminalLine(p.Command), nameWidth),
-				fmt.Sprintf("%6s", fmt.Sprintf("%.1f%%", p.CPUPercent)),
+				fmt.Sprintf("%9s", fmt.Sprintf("%.1f%%", p.CPUPercent)),
 				fmt.Sprintf("%16s", fmt.Sprintf("%s (%.1f%%)", formatBytes(p.MemoryRSS), p.MemoryPercent)),
 				startedStr,
 			}
@@ -311,7 +389,7 @@ func (m *MainModel) getColumns() []table.Column {
 		{Title: "PID", Width: 8},
 		{Title: "User", Width: 12},
 		{Title: "Name", Width: 20},
-		{Title: "CPU%", Width: 6},
+		{Title: "Avg CPU", Width: 9},
 		{Title: "Mem", Width: 16},
 		{Title: "Started", Width: 19},
 	}
@@ -400,6 +478,8 @@ func (m *MainModel) updatePortTable() {
 		match := false
 		if filter == "" {
 			match = true
+		} else if m.exactPort {
+			match = strconv.Itoa(p.Port) == filter
 		} else {
 			if strings.Contains(fmt.Sprintf("%d", p.Port), filter) ||
 				strings.Contains(strings.ToLower(p.Protocol), filter) ||
@@ -476,6 +556,20 @@ func (m *MainModel) updatePortDetailsWithMap(procMap map[int]model.Process) {
 						output.SanitizeTerminalLine(proc.Command),
 						cmd,
 					})
+				} else if p.PID == 0 {
+					user, note := "-", "owning process not visible"
+					if p.User != "" {
+						user = output.SanitizeTerminalLine(p.User)
+					}
+					if ownersHidden() {
+						note = "run witr with sudo to see it"
+					}
+					rows = append(rows, table.Row{
+						fmt.Sprintf("%8s", "-"),
+						user,
+						"(unknown)",
+						note,
+					})
 				} else {
 					rows = append(rows, table.Row{
 						fmt.Sprintf("%8d", p.PID),
@@ -506,14 +600,14 @@ func (m *MainModel) updateDetailViewport() {
 				m.viewport.Width = 1
 			}
 		}
-		output.RenderStandard(&b, *m.selectedDetail, true, true)
+		output.RenderStandard(&b, *m.selectedDetail, !noColor, true)
 	case m.selectedContainer != nil:
 		// Container detail occupies the full width — no env pane to share with.
 		if w := m.width - 6; w > 0 {
 			m.viewport.Width = w
 		}
 		label := "container " + m.selectedContainer.Name
-		output.RenderContainerFallback(&b, label, m.selectedContainer, true, true)
+		output.RenderContainerFallback(&b, label, m.selectedContainer, !noColor, true)
 	default:
 		return
 	}
@@ -537,7 +631,7 @@ func (m *MainModel) updateEnvViewport() {
 			fmt.Fprintf(&b, "%s\n", output.SanitizeTerminalLine(env))
 		}
 	} else {
-		dimStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		dimStyle := lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
 		fmt.Fprintf(&b, "%s\n", dimStyle.Render("No environment variables found."))
 	}
 
@@ -631,22 +725,34 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 	green := lipgloss.NewStyle().Foreground(colorTreeTarget)
 	highlight := lipgloss.NewStyle().
 		Background(colorSelectBg).
-		Foreground(colorSelectFg)
-	dim := lipgloss.NewStyle().Foreground(colorMuted)
+		Foreground(colorSelectFg).
+		Reverse(basicColors)
+	dim := lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
 	sectionLabel := lipgloss.NewStyle().Foreground(colorSectionLabel).Bold(true)
 
 	fmt.Fprintf(&b, "%s\n", sectionLabel.Render("Ancestry Tree:"))
 
+	var rows []int
 	if len(ancestry) == 0 {
 		fmt.Fprintf(&b, "  %s\n", dim.Render("No ancestry found"))
+		rows = append(rows, -1)
 	}
 
 	idx := 0
-	for i, proc := range ancestry {
-		indent := strings.Repeat("  ", i)
-		if i > 0 {
-			fmt.Fprintf(&b, "%s%s ", indent, magenta.Render("└─"))
+	depth := 0
+	branch := func() {
+		if depth > 0 {
+			fmt.Fprintf(&b, "%s%s ", strings.Repeat("  ", depth), magenta.Render("└─"))
 		}
+		depth++
+	}
+	for i, proc := range ancestry {
+		if gap := output.ParentGap(ancestry, i); gap != "" {
+			branch()
+			fmt.Fprintf(&b, "%s\n", dim.Render(gap))
+			rows = append(rows, -1)
+		}
+		branch()
 
 		label := fmt.Sprintf("%s (pid %d)", output.SanitizeTerminalLine(output.ChainName(proc)), proc.PID)
 		if idx == m.treeCursor {
@@ -655,6 +761,7 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 			label = green.Render(label)
 		}
 		fmt.Fprintf(&b, "%s\n", label)
+		rows = append(rows, idx)
 		idx++
 	}
 
@@ -662,11 +769,12 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 	limit := 10
 	count := len(children)
 	if count > 0 {
-		baseIndent := strings.Repeat("  ", len(ancestry))
+		baseIndent := strings.Repeat("  ", depth)
 		for i, child := range children {
 			if i >= limit {
 				remaining := count - limit
 				fmt.Fprintf(&b, "%s%s ... and %d more\n", baseIndent, magenta.Render("└─"), remaining)
+				rows = append(rows, -1)
 				break
 			}
 			connector := "├─"
@@ -680,9 +788,12 @@ func (m *MainModel) renderTreeContent(res model.Result, ancestry []model.Process
 				label = highlight.Render(label)
 			}
 			fmt.Fprintf(&b, "%s%s %s\n", baseIndent, magenta.Render(connector), label)
+			rows = append(rows, idx)
 			idx++
 		}
 	}
+
+	m.treeRows = rows
 
 	if res.Process.Cmdline != "" {
 		fmt.Fprintf(&b, "\n%s\n%s\n", sectionLabel.Render("Command:"), output.SanitizeTerminalLine(res.Process.Cmdline))
@@ -848,6 +959,18 @@ func (m *MainModel) updateContainerTable() {
 	}
 	m.containerTable.SetRows(rows)
 	m.filteredContainers = filtered
+}
+
+// centerCursor selects row i and scrolls it toward the middle of the table.
+// SetCursor alone keeps the scroll offset, which leaves a row more than a
+// screen down just out of view; moving past the row and stepping back
+// scrolls the table the way the arrow keys do.
+func centerCursor(t *table.Model, i int) {
+	t.GotoTop()
+	t.MoveDown(min(i+t.Height()/2, len(t.Rows())-1))
+	for t.Cursor() > i {
+		t.MoveUp(1)
+	}
 }
 
 func truncate(s string, n int) string {

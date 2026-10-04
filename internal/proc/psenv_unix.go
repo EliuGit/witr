@@ -9,6 +9,18 @@ import (
 	"strings"
 )
 
+// imageName returns the executable name of pid, or "".
+func imageName(pid int) string {
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=")
+	cmd.Env = buildEnvForPS()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(out))
+	return name[strings.LastIndex(name, "/")+1:]
+}
+
 func buildEnvForPS() []string {
 	var env []string
 	for _, e := range os.Environ() {

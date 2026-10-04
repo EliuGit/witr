@@ -38,6 +38,89 @@ func TestRenderContainerFallback(t *testing.T) {
 	}
 }
 
+func TestRenderProxiedContainer(t *testing.T) {
+	match := &model.ContainerMatch{
+		Runtime:           "docker",
+		ID:                "c67b85f01c07",
+		Name:              "rustfs",
+		Image:             "rustfs/rustfs:latest",
+		ComposeConfigFile: "/root/app/rustfs/compose.yml",
+	}
+
+	var buf bytes.Buffer
+	RenderProxiedContainer(&buf, "port 3120", match, false, false, PublishedNote([]string{"docker-proxy", "docker-proxy"}, []int{5196, 5197}))
+	out := buf.String()
+
+	for _, want := range []string{
+		"Target      : port 3120",
+		"Compose File: /root/app/rustfs/compose.yml",
+		"Published on the host by docker-proxy (pids 5196, 5197); the container's own processes are not visible from here.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("RenderProxiedContainer output missing %q\nGot:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "owning process is not visible") {
+		t.Errorf("the proxied view should name the proxy, not use the generic note; got:\n%s", out)
+	}
+}
+
+// Docker Desktop publishes through its backend and, on Windows, the WSL
+// relay; the note names each.
+func TestPublishedNoteGroupsByProcess(t *testing.T) {
+	got := PublishedNote([]string{"com.docker.backend.exe", "wslrelay.exe"}, []int{17276, 19984})
+	want := "Published on the host by com.docker.backend.exe (pid 17276), wslrelay.exe (pid 19984); the container's own processes are not visible from here."
+	if got != want {
+		t.Errorf("PublishedNote = %q\nwant %q", got, want)
+	}
+}
+
+func TestProxiedContainerJSONNote(t *testing.T) {
+	match := &model.ContainerMatch{Runtime: "docker", ID: "c67b85f01c07", Name: "rustfs"}
+	out, err := ContainerFallbackToJSON("port 3120", match, PublishedNote([]string{"docker-proxy"}, []int{5196}))
+	if err != nil {
+		t.Fatalf("ContainerFallbackToJSON: %v", err)
+	}
+	if !strings.Contains(out, "docker-proxy (pid 5196)") || strings.Contains(out, "owning process is not visible") {
+		t.Errorf("a proxied container's JSON should name the proxy:\n%s", out)
+	}
+}
+
+func TestRenderStandardContainerDetails(t *testing.T) {
+	proc := model.Process{PID: 8089, Command: "rustfs", Container: "docker: rustfs/rustfs (rustfs)"}
+	r := model.Result{
+		Process:  proc,
+		Ancestry: []model.Process{{PID: 1, Command: "systemd"}, proc},
+		Container: &model.ContainerMatch{
+			Image:             "rustfs/rustfs:latest",
+			Ports:             "0.0.0.0:3120->9000/tcp",
+			ComposeConfigFile: "/root/app/rustfs/compose.yml",
+			ComposeWorkingDir: "/root/app/rustfs",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderStandard(&buf, r, false, false)
+	out := buf.String()
+	for _, want := range []string{
+		"Image       : rustfs/rustfs:latest",
+		"Published   : 0.0.0.0:3120->9000/tcp",
+		"Compose File: /root/app/rustfs/compose.yml",
+		"Compose Dir : /root/app/rustfs",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("standard output missing %q\nGot:\n%s", want, out)
+		}
+	}
+
+	buf.Reset()
+	r.Container = nil
+	RenderStandard(&buf, r, false, false)
+	if strings.Contains(buf.String(), "Image") {
+		t.Errorf("no container details should mean no Image line, got:\n%s", buf.String())
+	}
+}
+
 func TestRenderContainerFallbackWithCompose(t *testing.T) {
 	match := &model.ContainerMatch{
 		Runtime:        "docker",
@@ -166,7 +249,7 @@ func TestContainerFallbackToJSON(t *testing.T) {
 		Ports:   "127.0.0.1:5432->5432/tcp",
 	}
 
-	jsonStr, err := ContainerFallbackToJSON("port 5432", match)
+	jsonStr, err := ContainerFallbackToJSON("port 5432", match, "")
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON() error: %v", err)
 	}
@@ -201,7 +284,7 @@ func TestContainerFallbackToJSONCompose(t *testing.T) {
 		ComposeService: "db",
 	}
 
-	jsonStr, err := ContainerFallbackToJSON("port 5432", match)
+	jsonStr, err := ContainerFallbackToJSON("port 5432", match, "")
 	if err != nil {
 		t.Fatalf("ContainerFallbackToJSON() error: %v", err)
 	}
@@ -231,5 +314,31 @@ func TestRenderContainerFallbackSanitizesOutput(t *testing.T) {
 
 	if strings.Contains(out, "\x1b") {
 		t.Errorf("output contains raw ANSI escape sequences, sanitization failed:\n%s", out)
+	}
+}
+
+// The Restarts line shows the count with the restart policy; the default
+// "no" policy and a zero count say nothing.
+func TestRestartsValue(t *testing.T) {
+	tests := []struct {
+		count  int
+		policy string
+		want   string
+	}{
+		{0, "", ""},
+		{0, "no", ""},
+		{3, "", "3"},
+		{0, "always", "0 (policy: always)"},
+		{12, "on-failure:5", "12 (policy: on-failure:5)"},
+	}
+	for _, tt := range tests {
+		if got := restartsValue(tt.count, tt.policy); got != tt.want {
+			t.Errorf("restartsValue(%d, %q) = %q, want %q", tt.count, tt.policy, got, tt.want)
+		}
+	}
+	var b bytes.Buffer
+	RenderContainerFallback(&b, "container web", &model.ContainerMatch{Runtime: "docker", ID: "abc", Name: "web", RestartCount: 4, RestartPolicy: "unless-stopped"}, false, false)
+	if !strings.Contains(b.String(), "Restarts    : 4 (policy: unless-stopped)") {
+		t.Errorf("container view missing the Restarts line:\n%s", b.String())
 	}
 }

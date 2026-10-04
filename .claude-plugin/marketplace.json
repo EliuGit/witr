@@ -1,0 +1,17 @@
+{
+  "name": "witr",
+  "owner": {
+    "name": "Pranshu Parmar",
+    "url": "https://github.com/pranshuparmar"
+  },
+  "metadata": {
+    "description": "The official witr plugin: an agent skill for explaining why a process is running and what started it."
+  },
+  "plugins": [
+    {
+      "name": "witr",
+      "source": "./plugins/witr",
+      "description": "Explains why a process is running and what started it: the official skill for using the witr CLI."
+    }
+  ]
+}

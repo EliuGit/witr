@@ -6,6 +6,9 @@ type Socket struct {
 	Address  string // 0.0.0.0, 127.0.0.1, ::
 	State    string
 	Protocol string
+	// The other end of a connected socket; empty for listeners.
+	RemoteAddress string `json:",omitempty"`
+	RemotePort    int    `json:",omitempty"`
 }
 
 // SocketInfo holds information about a socket's state

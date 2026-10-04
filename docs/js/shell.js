@@ -9,7 +9,7 @@ import { ESC } from './ansi.js';
 import { tokenize, parse } from './parser.js';
 
 // Fallback until app.js fetches the real value from internal/version/VERSION.
-const WITR_VERSION_FALLBACK = 'v0.3.3';
+const WITR_VERSION_FALLBACK = 'v0.3.4';
 
 const HELP = `Available commands in this playground:
 

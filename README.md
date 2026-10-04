@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/pranshuparmar/witr/main/install.sh 
 
 The script will:
 - Detect your operating system (`linux`, `darwin` or `freebsd`)
-- Detect your CPU architecture (`amd64` or `arm64`)
+- Detect your CPU architecture (`amd64`, `arm64` or `loong64` on Linux)
 - Download the latest released binary and man page
 - Install it to `/usr/local/bin/witr`
 - Install the man page to `/usr/local/share/man/man1/witr.1`
@@ -369,6 +369,7 @@ OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 [ "$ARCH" = "x86_64" ] && ARCH="amd64"
 [ "$ARCH" = "aarch64" ] && ARCH="arm64"
+[ "$ARCH" = "loongarch64" ] && ARCH="loong64"
 
 # 2. Download the binary
 curl -fsSL "https://github.com/pranshuparmar/witr/releases/latest/download/witr-${OS}-${ARCH}" -o witr
@@ -534,11 +535,11 @@ Running `witr` without any arguments or with the `-i` flag launches the **Intera
 
 ### Key Features:
 - **Processes Tab**: Live, sortable, filterable list of all running processes with a side panel showing the ancestry tree of the highlighted process.
-- **Ports Tab**: Open/listening ports with the owning processes attached in a side panel. Toggle between LISTEN-only and ALL with `a`.
+- **Ports Tab**: Open/listening ports with the owning processes attached in a side panel. Toggle between LISTEN-only and ALL with `a`. Enter on an owner opens it, or the container a port is published for; an owner hidden from your user shows the user it runs as (run with sudo to see the process).
 - **Containers Tab**: All running containers across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails in one list - name, image, status, ports, command, plus a per-container detail view with mounts, networks, and compose project metadata.
 - **Locks Tab**: System-wide file locks (POSIX/FLOCK on Linux, lsof-derived on macOS/FreeBSD). Press `a` to switch into "all open files" mode, where locked entries are merged with every interesting open fd; type into `/` to search across the merged set.
 - **Process Details**: Deep-dive into a process to see its full ancestry tree, child processes, environment variables, working directory, sockets, file context, and more.
-- **Process Actions**: Send signals (Kill, Terminate, Pause, Resume) or Renice processes directly from the UI (Unix only).
+- **Process Actions**: Send signals (Kill, Terminate, Pause, Resume) or Renice processes directly from the UI (Unix only). Press `a` on a process in the list or in its detail view; the confirmation names the exact process before anything is sent.
 - **Mouse Support**: Navigate, sort columns, and click rows using your mouse.
 - **Adaptive Theme**: Colors adapt automatically to light and dark terminal backgrounds.
 - **Auto-Refresh**: The process, port, container, and lock lists refresh automatically on an adaptive cadence (starts at 3 seconds, backing off under load).
@@ -569,9 +570,9 @@ Positional arguments (without flags) are treated as process or service names. Mu
 
 All target flags (`--pid`, `--port`, `--file`, `--container`) are repeatable and can be mixed with each other and with positional name arguments. When multiple targets are provided, results are shown sequentially with labeled dividers. All output modes (standard, short, tree, JSON, env, warnings, verbose) work with multiple inputs.
 
-The `--container` flag searches across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails, and matches against container name, image, command, and compose project/service labels.
+The `--container` flag searches across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails, and matches against container name, image, command, and compose project/service labels, or a container ID (full, short, or a prefix of at least 4 characters).
 
-The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used.
+The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used. It needs a terminal: run without one (from a script, a pipe or CI) and witr exits with code 4 and asks for a target instead. An output mode with no target (`witr --json`, `--short`, `--tree`, `--warnings`, `--verbose` or `--env`) also exits with code 4 and asks for a target, rather than opening the TUI.
 
 ---
 
@@ -615,7 +616,8 @@ Source      : pm2
 
 Working Dir : /opt/apps/expense-manager
 Git Repo    : expense-manager (main)
-Sockets     : 127.0.0.1:5001 (TCP | LISTENING)
+Sockets     : 127.0.0.1:5001 (TCP | LISTENING, 2 connections)
+              127.0.0.1:51744 → 127.0.0.1:5432 (TCP | ESTABLISHED)
 ```
 
 ---
@@ -699,7 +701,7 @@ Explains the process holding a file open.
 witr --container redis
 ```
 
-Looks up a container by name, image, command, or compose project/service across every detected runtime (Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, FreeBSD jails). Pass `--verbose` to include mounts, networks, and compose metadata in the output.
+Looks up a container by name, ID, image, command, or compose project/service across every detected runtime (Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, FreeBSD jails). The output includes the container's image and, for Compose services, the Compose file and project directory on the host. Pass `--verbose` to include mounts.
 
 ---
 
@@ -749,10 +751,13 @@ witr returns meaningful exit codes for use in scripts, CI pipelines, and monitor
 |------|---------|
 | 0 | Clean: process found, no warnings |
 | 1 | Warnings: process found but has one or more warnings |
-| 2 | Not found: no matching process or service |
-| 3 | Permission denied: insufficient privileges |
+| 2 | Not found: no matching process or service (also a port no process on this system holds, when witr runs as root or on Windows) |
+| 3 | Permission denied: insufficient privileges (retry with sudo) |
 | 4 | Invalid input: bad arguments or ambiguous match |
 | 5 | Internal error: an unexpected failure occurred |
+| 6 | Cause unknown: process found, but what started it can't be traced (its warnings say why). Not used on Windows, where this is routine |
+
+With several targets, the most severe result wins. Cause unknown ranks above warnings but below every failure (2 to 5).
 
 #### Example Usage:
 
@@ -765,6 +770,7 @@ case $? in
   3) echo "Need elevated privileges" ;;
   4) echo "Invalid input or ambiguous match" ;;
   5) echo "Internal error" ;;
+  6) echo "Cannot tell what started it" ;;
 esac
 ```
 
@@ -778,12 +784,16 @@ What the user asked about.
 
 #### Process
 
-Executable, PID, user, command, start time and restart count.
+Executable, PID, user, command, start time and restart count. The restart count comes from the managing system: a systemd unit, or the container runtime (Docker, Podman, nerdctl and Kubernetes), which also shows the container's restart policy, e.g. `Restarts : 12 (policy: unless-stopped)`.
+
+On Windows the user carries the process's integrity level when it isn't the normal Medium: `(elevated)` for a process run as administrator, `(system integrity)`, `(low integrity)` or `(untrusted integrity)` for sandboxed ones. On Linux, a `Security` line shows the AppArmor profile or SELinux context confining the process; unconfined processes have none.
 
 #### Why It Exists
 
 A causal ancestry chain showing how the process came to exist.
 This is the core value of witr.
+
+When the process that started it has exited, the chain marks the break with `? (original parent exited)` (or `? (parent pid N exited)` when that parent's PID no longer exists or now belongs to an unrelated process) instead of crediting whatever adopted it.
 
 #### Source
 
@@ -800,13 +810,14 @@ Examples:
 - interactive shell (detects tmux/screen sessions)
 - Snap/Flatpak sandbox (Linux)
 
-Only **one primary source** is selected.
+Only **one primary source** is selected. If the original parent has exited and nothing about the process itself (its container, service unit, login session or app scope, or launchd job) explains it, the source is reported as `unknown` rather than guessed. On systems without such a service manager it stays `init`, with a note that init only adopted it.
 
 #### Context (best effort)
 
 - Working directory
 - Git repository name and branch
 - Container name / image (docker, podman, kubernetes, colima, containerd)
+- Sockets: listeners first, each with the number of connections it accepted, then other sockets; a connection shows `local → remote`
 - Public vs private bind
 
 #### Warnings
@@ -820,12 +831,68 @@ Non‑blocking observations such as:
 - Process is using high memory (>1GB RSS)
 - Process has been running for over 90 days
 - Deleted binary, library injection indicators (LD_PRELOAD, DYLD_*)
+- Original parent process has exited, so what started the process can't be traced
+
+---
+
+### 7.4 JSON Output
+
+`--json` is meant for scripts and tools, and its output is a contract:
+
+- **Stable:** field names, what they mean, and their types. Releases may add fields, so ignore any you don't recognise.
+- **Not part of the contract:** field order, whitespace, and the wording of human-readable text (`Error`, `Note`, `Description` and warning messages). Match on fields and exit codes, not on sentences.
+- **Empty values** may be `null`, an empty list, or left out.
+- **Breaking changes** (renaming, removing or retyping a field) only ship in a release whose notes call them out.
+
+| Command | Output |
+|---------|--------|
+| `witr <target> --json` | The full report: `Target`, `Process`, `Ancestry`, `Source`, `Warnings` and the rest |
+| `--short --json` | A list of `{PID, Command}` from the top of the chain to the process, with `PPID` and `ParentExited` where the process that started it has exited |
+| `--tree --json` | `{Ancestry, Children}`, each a list of the same entries |
+| `--warnings --json` | `{PID, Process, Command, Warnings}` |
+| `--env --json` | `{PID, Process, Command, Env}` |
+| A container whose processes aren't visible | `{Target, Runtime, ContainerID, ContainerName, Image, …, Note}` |
+| A failed lookup | `{Target, Error}`, plus `Matches` when the target was ambiguous |
+| Several targets | A list of the above, one entry per target, in the order given |
+
+A test pins every field of every shape, so an accidental rename fails the build.
+
+### 7.5 Using witr with AI Coding Agents
+
+AI coding agents (Claude Code, Codex, Cursor and others) regularly run into ports that are already in use, leftover dev servers and confusing containers, and work around them by chaining `lsof`, `ps`, `netstat` and `docker ps`. witr answers the same questions in one command, and two things make it easy for an agent to use:
+
+- **`--json`** prints the result as JSON: for a process, the full report (the process, its ancestry chain, the source that started it and any warnings). A failed or ambiguous lookup prints `{Target, Error}`, with the candidates in `Matches` when it is ambiguous, and several targets print an array.
+- **Exit codes** say what happened without parsing any text (see [7.2 Exit Codes](#72-exit-codes)). Exit code `1` means the process was found and has warnings; it is not a failure.
+
+Add a short note like this to your project's agent instructions (`AGENTS.md`, `CLAUDE.md` or similar):
+
+```markdown
+## Process and port debugging
+
+Use `witr` instead of chaining lsof/ps/netstat/docker commands:
+
+- Port already in use: `witr --port <PORT> --json`
+- Unknown or stuck process: `witr <name> --json`, or `witr --pid <PID> --tree`
+- Container: `witr --container <name or ID> --json`
+
+Exit codes: 0 found, 1 found with warnings (not a failure), 2 not found,
+3 permission denied (retry with sudo), 4 ambiguous name or bad input
+(re-run with --pid), 5 internal error, 6 found but what started it can't
+be traced. Run `witr --help` for all options.
+```
+
+#### Official agent skill
+
+For fuller guidance, install the official skill: it tells an agent which command fits the situation, how to read the JSON and exit codes, and to ask before stopping anything witr finds. The `witr` binary still needs to be installed.
+
+- **Claude Code:** run `/plugin marketplace add pranshuparmar/witr`, then `/plugin install witr@witr`.
+- **Other agents that read Agent Skills, or a manual install:** copy [`plugins/witr/skills/witr`](plugins/witr/skills/witr) into the agent's skills folder (for Claude Code, `~/.claude/skills/`).
 
 ---
 
 ## 8. Platform Support
 
-- **Linux** (x86_64, arm64) - Full feature support (`/proc`).
+- **Linux** (x86_64, arm64, loong64) - Full feature support (`/proc`).
 - **macOS** (x86_64, arm64) - Uses `ps`, `lsof`, `sysctl`, `pgrep`.
 - **Windows** (x86_64, arm64) - Native Win32 APIs (ToolHelp32, PSAPI, Service Control Manager). No PowerShell or WMI dependency.
 - **FreeBSD** (x86_64, arm64) - Uses `procstat`, `ps`, `lsof`.
@@ -850,9 +917,10 @@ Non‑blocking observations such as:
 | Environment variables | ✅ | ⚠️ | ⚠️ | ✅ | macOS: SIP restrictions; Windows: protected processes inaccessible. |
 | **Network** |
 | Listening ports | ✅ | ✅ | ✅ | ✅ | |
+| Connections (remote end) | ✅ | ✅ | ✅ | ✅ | Connections show their remote end; connections a listener accepted are counted on its row. |
 | Bind addresses | ✅ | ✅ | ✅ | ✅ | |
 | Port → PID resolution | ✅ | ✅ | ✅ | ✅ | |
-| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. |
+| Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy`, Docker Desktop's forwarders (`com.docker.backend`, plus `wslrelay` on Windows), rootless Podman's `rootlessport` or `pasta`, or RootlessKit (rootless nerdctl and Docker), is explained by the container's own process when it is visible, and by this view otherwise. So is a port that no process holds but a Docker, Podman or nerdctl container publishes (published through firewall rules). In the TUI's Ports tab, opening such a port's owner shows the container. |
 | **Service Detection** |
 | Service Manager | ✅ | ✅ | ✅ | ✅ | Linux: systemd, macOS: launchd, Windows: Services, FreeBSD: rc.d |
 | Service Description | ✅ | ✅ | ✅ | ✅ | Linux: `Description`, macOS: `Comment`, Windows: `Display Name`, FreeBSD: `rc` header |
@@ -862,6 +930,8 @@ Non‑blocking observations such as:
 | SSH session detection | ✅ | ✅ | ✅ | ✅ | Detects remote IP and terminal. |
 | tmux/screen detection | ✅ | ✅ | ❌ | ✅ | Shows session name in source. |
 | Schedule detection | ✅ | ✅ | ❌ | ❌ | Linux: systemd timers, macOS: launchd intervals/calendar. |
+| Restart count | ✅ | ⚠️ | ⚠️ | ❌ | systemd restarts on Linux; container restart count and policy wherever Docker, Podman, nerdctl or Kubernetes runs. |
+| Exited parent detection | ✅ | ✅ | ⚠️ | ✅ | Marks where the process that started it exited. Windows shows the break but doesn't treat it as a finding (no exit code 6): its launchers routinely exit. |
 | Snap/Flatpak detection | ✅ | ❌ | ❌ | ❌ | |
 | **Health & Diagnostics** |
 | CPU usage detection | ✅ | ✅ | ✅ | ✅ | |
@@ -871,6 +941,7 @@ Non‑blocking observations such as:
 | File Locks | ✅ | ✅ | ❌ | ✅ | Linux: `/proc/locks`; macOS/FreeBSD: derived from `lsof`/`fstat`. |
 | Deleted binary detection | ✅ | ✅ | ✅ | ✅ | Warns if executable is missing. |
 | Capability warnings | ✅ | ❌ | ❌ | ❌ | Warns about dangerous capabilities on non-root processes. |
+| Security context | ✅ | ❌ | ✅ | ❌ | Linux: AppArmor profile or SELinux context; Windows: integrity level (elevated, system, low). |
 | **Context** |
 | Git repo/branch detection | ✅ | ✅ | ✅ | ✅ | |
 | **Interactive Mode (TUI)** |
@@ -896,6 +967,8 @@ If you are not seeing the expected information, try running witr with sudo:
 ```bash
 sudo witr [your arguments]
 ```
+
+Without root, a port held by another user's process still shows which user it belongs to (`it belongs to postgres`), but not the process. With root, a port that no process on the system holds is reported as such (exit code 2): on WSL that's usually a process in another distro, since all distros share one network.
 
 #### macOS
 

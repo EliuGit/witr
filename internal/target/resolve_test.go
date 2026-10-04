@@ -3,6 +3,7 @@
 package target
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -169,5 +170,24 @@ func TestResolvePortWithExactFlag(t *testing.T) {
 				t.Logf("Resolve returned error: %v", err)
 			}
 		})
+	}
+}
+
+func TestAddressOwnerPIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[string][]int
+		want []int
+	}{
+		{"one process on IPv4 and IPv6", map[string][]int{"127.0.0.1:8080": {100}, "[::1]:8080": {100}}, []int{100}},
+		{"master and workers share the listener", map[string][]int{"*:80": {102, 100, 101}}, []int{100}},
+		{"master on both families, workers on one", map[string][]int{"*:80": {101, 100}, "*6:80": {100}}, []int{100}},
+		{"two services", map[string][]int{"127.0.0.1:53": {300}, "10.0.0.1:53": {200}}, []int{200, 300}},
+		{"nothing", map[string][]int{"*:80": {}}, nil},
+	}
+	for _, tt := range tests {
+		if got := addressOwnerPIDs(tt.in); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: addressOwnerPIDs = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

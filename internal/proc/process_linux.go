@@ -5,6 +5,7 @@ package proc
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,6 +13,15 @@ import (
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
+
+// imageName returns the executable name of pid, or "".
+func imageName(pid int) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
 
 func ReadProcess(pid int) (model.Process, error) {
 	if pid <= 0 {
@@ -57,12 +67,15 @@ func ReadProcess(pid int) (model.Process, error) {
 	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
 	if cgroupData, err := os.ReadFile(cgroupFile); err == nil {
 		cgroupStr := string(cgroupData)
+		// A runtime's own service (docker.service, podman.service,
+		// containerd.service) names the runtime too, but holds its daemons and
+		// helpers (dockerd, docker-proxy, containerd-shim), not containers. Only
+		// a container ID marks a process as inside a container.
 		switch {
 		case strings.Contains(cgroupStr, "docker"):
-			container = "docker"
-			containerRuntime = "docker"
-			containerID = extractContainerID(cgroupStr, "docker-", "docker/")
+			containerID = fullContainerID(cgroupStr, "docker-", "docker/")
 			if containerID != "" {
+				containerRuntime = "docker"
 				if name := resolveContainerName(containerID, "docker"); name != "" {
 					container = name
 				} else {
@@ -71,10 +84,9 @@ func ReadProcess(pid int) (model.Process, error) {
 			}
 
 		case strings.Contains(cgroupStr, "podman"), strings.Contains(cgroupStr, "libpod"):
-			container = "podman"
-			containerRuntime = "podman"
-			containerID = extractContainerID(cgroupStr, "libpod-", "libpod/")
+			containerID = fullContainerID(cgroupStr, "libpod-", "libpod/")
 			if containerID != "" {
+				containerRuntime = "podman"
 				if name := resolveContainerName(containerID, "podman"); name != "" {
 					container = name
 				} else {
@@ -94,11 +106,14 @@ func ReadProcess(pid int) (model.Process, error) {
 				}
 			}
 
-		case strings.Contains(cgroupStr, "containerd"):
-			container = "containerd"
-			containerRuntime = "nerdctl"
-			if id := findLongHexID(cgroupStr); id != "" {
+		case strings.Contains(cgroupStr, "containerd"), containerdCgroupID(cgroupStr) != "":
+			id := containerdCgroupID(cgroupStr)
+			if id == "" {
+				id = findLongHexID(cgroupStr)
+			}
+			if id != "" {
 				containerID = id
+				containerRuntime = "nerdctl"
 				if name := resolveContainerName(containerID, "nerdctl"); name != "" {
 					container = "containerd: " + name
 				} else {
@@ -118,10 +133,13 @@ func ReadProcess(pid int) (model.Process, error) {
 			}
 		case strings.Contains(cgroupStr, "lxc.payload"):
 			name := extractLXCBasedContainerName(cgroupStr)
+			containerRuntime = "lxc"
 			if name != "" {
 				container = "lxc-based: " + name
+				containerID = name
 			} else {
 				container = "lxc-based"
+				containerID = "lxc"
 			}
 		}
 	}
@@ -163,6 +181,7 @@ func ReadProcess(pid int) (model.Process, error) {
 	}
 
 	ppid, _ := strconv.Atoi(fields[1])
+	session, _ := strconv.Atoi(fields[3])
 	state := processState(fields)
 	startTicks, _ := strconv.ParseInt(fields[19], 10, 64)
 
@@ -266,6 +285,8 @@ func ReadProcess(pid int) (model.Process, error) {
 		container = resolveDockerProxyContainer(cmdline)
 	}
 
+	securityModule, securityLabel := readSecurityLabel("", pid)
+
 	return model.Process{
 		PID:              pid,
 		PPID:             ppid,
@@ -286,9 +307,12 @@ func ReadProcess(pid int) (model.Process, error) {
 		Sockets:          procSockets,
 		Health:           health,
 		Forked:           forked,
+		Session:          session,
 		Env:              env,
 		ExeDeleted:       isBinaryDeleted(pid),
 		Capabilities:     ReadCapabilities(pid),
+		SecurityModule:   securityModule,
+		SecurityLabel:    securityLabel,
 	}, nil
 }
 
@@ -366,6 +390,36 @@ func extractContainerID(cgroup, dashPrefix, slashPrefix string) string {
 		}
 	}
 	return ""
+}
+
+// containerdCgroupPattern matches the cgroups of containers started directly
+// through containerd (e.g. by nerdctl), which never name containerd itself:
+// "/<namespace>/<id>" under the cgroupfs driver, or "nerdctl-<id>.scope" under
+// the systemd driver.
+var containerdCgroupPattern = regexp.MustCompile(`(?m):/[^/\n]+/([0-9a-f]{64})(?:/|$)|/nerdctl-([0-9a-f]{64})\.scope`)
+
+// containerdCgroupID returns the container ID from a containerd cgroup, or ""
+// when the cgroup isn't one.
+func containerdCgroupID(cgroup string) string {
+	m := containerdCgroupPattern.FindStringSubmatch(cgroup)
+	if m == nil {
+		return ""
+	}
+	if m[1] != "" {
+		return m[1]
+	}
+	return m[2]
+}
+
+// fullContainerID extracts a container ID and accepts it only when it is a
+// full 64-character hex ID. That rules out helpers in look-alike scopes, such
+// as Podman's conmon monitor (libpod-conmon-<id>.scope).
+func fullContainerID(cgroup, dashPrefix, slashPrefix string) string {
+	id := extractContainerID(cgroup, dashPrefix, slashPrefix)
+	if findLongHexID(id) != id {
+		return ""
+	}
+	return id
 }
 
 func extractLXCBasedContainerName(cgroup string) string {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/pranshuparmar/witr/pkg/model"
+	"github.com/spf13/cobra"
 )
 
 func tgt(tp model.TargetType, v string) model.Target { return model.Target{Type: tp, Value: v} }
@@ -193,5 +194,75 @@ func TestJSONErrorEntry(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("jsonErrorEntry missing %q in:\n%s", want, s)
 		}
+	}
+}
+
+// flagCmd defines the same target and short flags as witr's root command.
+func flagCmd() *cobra.Command {
+	cmd := &cobra.Command{}
+	for _, f := range [][2]string{{"pid", "p"}, {"port", "o"}, {"file", "f"}, {"container", "c"}} {
+		cmd.Flags().StringSliceP(f[0], f[1], nil, "")
+	}
+	for _, f := range [][2]string{{"short", "s"}, {"tree", "t"}, {"exact", "x"}, {"interactive", "i"}} {
+		cmd.Flags().BoolP(f[0], f[1], false, "")
+	}
+	return cmd
+}
+
+func TestExpandShortFlags(t *testing.T) {
+	t.Parallel()
+
+	arity := shortFlagArity(flagCmd())
+	cases := []struct {
+		in, want []string
+	}{
+		{[]string{"-sp", "1"}, []string{"-s", "-p", "1"}},
+		{[]string{"-p1"}, []string{"-p", "1"}},
+		{[]string{"-p=1"}, []string{"-p", "1"}},
+		{[]string{"-sxp1", "nginx"}, []string{"-s", "-x", "-p", "1", "nginx"}},
+		{[]string{"-sq"}, []string{"-s", "-q"}},
+		{[]string{"-s", "--pid=1"}, []string{"-s", "--pid=1"}},
+		{[]string{"--", "-sp"}, []string{"--", "-sp"}},
+	}
+	for _, c := range cases {
+		if got := expandShortFlags(c.in, arity); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("expandShortFlags(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestOrderedTargets(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  []string
+		want []model.Target
+	}{
+		{[]string{"nginx", "-p1", "-o=80"}, []model.Target{tgt(model.TargetName, "nginx"), tgt(model.TargetPID, "1"), tgt(model.TargetPort, "80")}},
+		{[]string{"-sp", "1", "nginx"}, []model.Target{tgt(model.TargetPID, "1"), tgt(model.TargetName, "nginx")}},
+		{[]string{"-xc", "web", "-p", "2,3"}, []model.Target{tgt(model.TargetContainer, "web"), tgt(model.TargetPID, "2"), tgt(model.TargetPID, "3")}},
+	}
+	for _, c := range cases {
+		cmd := flagCmd()
+		if err := cmd.ParseFlags(c.raw); err != nil {
+			t.Fatalf("ParseFlags(%q): %v", c.raw, err)
+		}
+		if got := orderedTargets(cmd, c.raw, cmd.Flags().Args()); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("orderedTargets(%q) = %v, want %v", c.raw, got, c.want)
+		}
+	}
+}
+
+// When the raw walk disagrees with cobra, cobra's parsed targets are used.
+func TestOrderedTargetsFallsBackToParsed(t *testing.T) {
+	t.Parallel()
+
+	cmd := flagCmd()
+	if err := cmd.ParseFlags([]string{"-p", "1", "nginx"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Target{tgt(model.TargetName, "nginx"), tgt(model.TargetPID, "1")}
+	if got := orderedTargets(cmd, nil, cmd.Flags().Args()); !reflect.DeepEqual(got, want) {
+		t.Errorf("orderedTargets with unreadable raw args = %v, want %v", got, want)
 	}
 }

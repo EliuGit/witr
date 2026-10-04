@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/pranshuparmar/witr/pkg/model"
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -16,6 +17,21 @@ var (
 	procGetProcessIoCounters  = modkernel32.NewProc("GetProcessIoCounters")
 	procGetProcessHandleCount = modkernel32.NewProc("GetProcessHandleCount")
 )
+
+// vmCounters mirrors VM_COUNTERS from NtQueryInformationProcess.
+type vmCounters struct {
+	PeakVirtualSize            uintptr
+	VirtualSize                uintptr
+	PageFaultCount             uint32
+	PeakWorkingSetSize         uintptr
+	WorkingSetSize             uintptr
+	QuotaPeakPagedPoolUsage    uintptr
+	QuotaPagedPoolUsage        uintptr
+	QuotaPeakNonPagedPoolUsage uintptr
+	QuotaNonPagedPoolUsage     uintptr
+	PagefileUsage              uintptr
+	PeakPagefileUsage          uintptr
+}
 
 // processMemoryCountersEx mirrors PROCESS_MEMORY_COUNTERS_EX. The CB field
 // must be set to sizeof(struct) before GetProcessMemoryInfo so Windows can
@@ -70,7 +86,12 @@ func ReadExtendedInfo(pid int) (model.MemoryInfo, model.IOStats, []string, int, 
 	); ret != 0 {
 		memInfo.RSS = uint64(pmc.WorkingSetSize)
 		memInfo.RSSMB = float64(memInfo.RSS) / (1024 * 1024)
-		memInfo.VMS = uint64(pmc.PrivateUsage)
+	}
+	// The address space the process has reserved; GetProcessMemoryInfo only
+	// has the commit charge, which the report shows as private memory.
+	var vm vmCounters
+	if windows.NtQueryInformationProcess(windows.Handle(handle), windows.ProcessVmCounters, unsafe.Pointer(&vm), uint32(unsafe.Sizeof(vm)), nil) == nil {
+		memInfo.VMS = uint64(vm.VirtualSize)
 		memInfo.VMSMB = float64(memInfo.VMS) / (1024 * 1024)
 	}
 

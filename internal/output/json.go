@@ -2,33 +2,51 @@ package output
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
-func ToJSON(r model.Result) (string, error) {
-	data, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
+// MarshalJSON renders v as indented JSON without escaping <, > and &, which
+// appear in port mappings and command lines.
+func MarshalJSON(v any) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	return string(data), nil
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+func ToJSON(r model.Result) (string, error) {
+	return MarshalJSON(r)
 }
 
 type shortProcess struct {
-	PID     int
-	Command string
+	PID          int
+	Command      string
+	PPID         int  `json:",omitempty"`
+	ParentExited bool `json:",omitempty"`
+}
+
+// toShort trims a process to the fields short and tree JSON carry, keeping
+// the PPID where the process that started it has exited.
+func toShort(p model.Process) shortProcess {
+	s := shortProcess{PID: p.PID, Command: p.Command}
+	if p.ParentExited {
+		s.PPID, s.ParentExited = p.PPID, true
+	}
+	return s
 }
 
 func ToShortJSON(r model.Result) (string, error) {
 	ancestry := make([]shortProcess, len(r.Ancestry))
 	for i, p := range r.Ancestry {
-		ancestry[i] = shortProcess{PID: p.PID, Command: p.Command}
+		ancestry[i] = toShort(p)
 	}
-	data, err := json.MarshalIndent(ancestry, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(ancestry)
 }
 
 func ToTreeJSON(r model.Result) (string, error) {
@@ -42,21 +60,17 @@ func ToTreeJSON(r model.Result) (string, error) {
 	}
 
 	for i, p := range r.Ancestry {
-		res.Ancestry[i] = shortProcess{PID: p.PID, Command: p.Command}
+		res.Ancestry[i] = toShort(p)
 	}
 
 	if len(r.Children) > 0 {
 		res.Children = make([]shortProcess, len(r.Children))
 		for i, p := range r.Children {
-			res.Children[i] = shortProcess{PID: p.PID, Command: p.Command}
+			res.Children[i] = toShort(p)
 		}
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }
 
 func ToWarningsJSON(r model.Result) (string, error) {
@@ -91,11 +105,7 @@ func ToWarningsJSON(r model.Result) (string, error) {
 		Warnings: warnings,
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }
 
 func ToEnvJSON(r model.Result) (string, error) {
@@ -120,9 +130,5 @@ func ToEnvJSON(r model.Result) (string, error) {
 		Env:     r.Process.Env,
 	}
 
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return MarshalJSON(res)
 }

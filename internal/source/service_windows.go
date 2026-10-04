@@ -3,30 +3,44 @@
 package source
 
 import (
-	"os/exec"
+	"fmt"
 	"strings"
 
+	procpkg "github.com/pranshuparmar/witr/internal/proc"
 	"github.com/pranshuparmar/witr/pkg/model"
 )
+
+// serviceDescription returns a service's display name, or "" when it only
+// repeats the service name (MySQL80 is displayed as "MySQL80").
+func serviceDescription(name string) string {
+	if d := procpkg.ServiceDisplayName(name); !strings.EqualFold(d, name) {
+		return d
+	}
+	return ""
+}
 
 func detectWindowsService(ancestry []model.Process) *model.Source {
 	// 1. Check for explicit service name in process metadata (prioritize target)
 	for i := len(ancestry) - 1; i >= 0; i-- {
 		p := ancestry[i]
 		if p.Service != "" {
-			registryKey := `HKLM\SYSTEM\CurrentControlSet\Services\` + p.Service
-			description := resolveWindowsServiceDescription(p.Service)
-
-			return &model.Source{
-				Type:        model.SourceWindowsService,
-				Name:        p.Service,
-				Description: description,
-				UnitFile:    registryKey,
+			src := &model.Source{
+				Type: model.SourceWindowsService,
+				Name: p.Service,
 				Details: map[string]string{
 					"manager": "services.exe",
 					"service": p.Service,
 				},
 			}
+			if strings.Contains(p.Service, ", ") {
+				// A shared host runs several services; no one of them alone
+				// started what runs under it.
+				src.Description = fmt.Sprintf("Shared service host (%s, pid %d)", p.Command, p.PID)
+			} else {
+				src.Description = serviceDescription(p.Service)
+				src.UnitFile = `HKLM\SYSTEM\CurrentControlSet\Services\` + p.Service
+			}
+			return src
 		}
 	}
 
@@ -51,7 +65,7 @@ func detectWindowsService(ancestry []model.Process) *model.Source {
 			name := strings.TrimSuffix(target.Command, ".exe")
 
 			registryKey := `HKLM\SYSTEM\CurrentControlSet\Services\` + name
-			description := resolveWindowsServiceDescription(name)
+			description := serviceDescription(name)
 
 			return &model.Source{
 				Type:        model.SourceWindowsService,
@@ -66,20 +80,4 @@ func detectWindowsService(ancestry []model.Process) *model.Source {
 	}
 
 	return nil
-}
-
-func resolveWindowsServiceDescription(serviceName string) string {
-	if _, err := exec.LookPath("sc"); err != nil {
-		return ""
-	}
-
-	cmd := exec.Command("sc", "GetDisplayName", serviceName)
-	out, _ := cmd.Output()
-
-	output := string(out)
-	if idx := strings.Index(output, "Name = "); idx != -1 {
-		return strings.TrimSpace(output[idx+7:])
-	}
-
-	return ""
 }

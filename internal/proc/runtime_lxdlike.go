@@ -3,7 +3,9 @@ package proc
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -130,13 +132,15 @@ func parseLXDLikeList(out []byte, runtime string) []*model.ContainerMatch {
 	return matches
 }
 
+// formatLXDLikeNetworks lists an instance's global addresses by interface, in
+// name order so the line reads the same on every run.
 func formatLXDLikeNetworks(networks map[string]lxdLikeNetworkEntry) string {
 	var parts []string
-	for iface, entry := range networks {
+	for _, iface := range slices.Sorted(maps.Keys(networks)) {
 		if iface == "lo" {
 			continue
 		}
-		for _, addr := range entry.Addresses {
+		for _, addr := range networks[iface].Addresses {
 			if addr.Scope == "link" || addr.Scope == "local" {
 				continue
 			}
@@ -146,9 +150,11 @@ func formatLXDLikeNetworks(networks map[string]lxdLikeNetworkEntry) string {
 	return strings.Join(parts, ", ")
 }
 
+// formatLXDLikeMounts lists an instance's disk devices, in name order.
 func formatLXDLikeMounts(devices map[string]map[string]string) string {
 	var parts []string
-	for name, dev := range devices {
+	for _, name := range slices.Sorted(maps.Keys(devices)) {
+		dev := devices[name]
 		if dev["type"] != "disk" {
 			continue
 		}

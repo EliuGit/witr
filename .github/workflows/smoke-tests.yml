@@ -3,6 +3,7 @@ name: Smoke Tests
 on:
   pull_request:
     branches: [ "main", "staging" ]
+  workflow_dispatch:
 
 permissions: read-all
 
@@ -45,6 +46,27 @@ jobs:
       - name: Verify Help
         shell: bash
         run: ./witr-${{ matrix.os }}-${{ matrix.arch }} --help
+
+  build-loong64:
+    name: "Build: linux/loong64 (LoongArch)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          check-latest: true
+
+      # GitHub-hosted runners are x86_64/arm64, so a loong64 binary cannot be
+      # executed directly. Cross-compile and verify the artifact instead.
+      - name: Cross-compile for LoongArch
+        shell: bash
+        run: |
+          GOOS=linux GOARCH=loong64 CGO_ENABLED=0 go build -o witr-linux-loong64 ./cmd/witr
+          file witr-linux-loong64 | grep LoongArch
 
   test-freebsd:
     name: "Test: FreeBSD"

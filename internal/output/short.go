@@ -1,6 +1,7 @@
 package output
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -17,6 +18,13 @@ func RenderShort(w io.Writer, r model.Result, colorEnabled bool) {
 				p.Print(" → ")
 			}
 		}
+		if gap := ParentGap(r.Ancestry, i); gap != "" {
+			if colorEnabled {
+				p.Printf("%s%s%s%s → %s", ColorDimYellow, gap, ColorReset, ColorMagenta, ColorReset)
+			} else {
+				p.Printf("%s → ", gap)
+			}
+		}
 
 		if colorEnabled {
 			nameColor := ansiString("")
@@ -29,6 +37,21 @@ func RenderShort(w io.Writer, r model.Result, colorEnabled bool) {
 		}
 	}
 	p.Println()
+}
+
+// ParentGap returns the placeholder shown just above chain[i] when the process
+// that started it has exited, or "" when the chain is intact there. At the top
+// of a chain the exited parent's PID is still known; further down, the process
+// was adopted and its original parent is unknown.
+func ParentGap(chain []model.Process, i int) string {
+	p := chain[i]
+	if !p.ParentExited {
+		return ""
+	}
+	if i == 0 && p.PPID > 0 {
+		return fmt.Sprintf("? (parent pid %d exited)", p.PPID)
+	}
+	return "? (original parent exited)"
 }
 
 // ChainName returns a display name for an ancestry or child node, falling back

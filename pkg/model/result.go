@@ -10,6 +10,10 @@ type Result struct {
 	Source         Source
 	Warnings       []string
 
+	// Container describes the container the process runs in (image, Compose
+	// project and files), when the runtime can be queried.
+	Container *ContainerMatch `json:",omitempty"`
+
 	// SocketInfo holds socket state details (for port queries)
 	SocketInfo *SocketInfo
 

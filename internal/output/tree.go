@@ -10,15 +10,29 @@ import (
 func PrintTree(w io.Writer, chain []model.Process, children []model.Process, colorEnabled bool) {
 	p := NewPrinter(w)
 
-	for i, proc := range chain {
-		indent := strings.Repeat("  ", i)
-		if i > 0 {
+	depth := 0
+	branch := func() {
+		if depth > 0 {
+			indent := strings.Repeat("  ", depth)
 			if colorEnabled {
 				p.Printf("%s%s└─ %s", indent, ColorMagenta, ColorReset)
 			} else {
 				p.Printf("%s└─ ", indent)
 			}
 		}
+		depth++
+	}
+
+	for i, proc := range chain {
+		if gap := ParentGap(chain, i); gap != "" {
+			branch()
+			if colorEnabled {
+				p.Printf("%s%s%s\n", ColorDimYellow, gap, ColorReset)
+			} else {
+				p.Printf("%s\n", gap)
+			}
+		}
+		branch()
 
 		if colorEnabled {
 			cmdColor := ansiString("")
@@ -35,7 +49,7 @@ func PrintTree(w io.Writer, chain []model.Process, children []model.Process, col
 		return
 	}
 
-	baseIndent := strings.Repeat("  ", len(chain))
+	baseIndent := strings.Repeat("  ", depth)
 
 	limit := 10
 	count := len(children)

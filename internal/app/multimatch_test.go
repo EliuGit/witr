@@ -2,7 +2,12 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,6 +45,73 @@ func TestPrintContainerMultiMatch(t *testing.T) {
 		}
 		if strings.Contains(out, `\n`) {
 			t.Errorf("color=%v: layout newline escaped to a literal \\n:\n%s", color, out)
+		}
+	}
+}
+
+// Under --json, stdout must stay one JSON document when a name matches several
+// processes: the candidates come back as data for a script to re-run with
+// --pid, not as a list for people. Two real sleepers make the name ambiguous.
+func TestJSONAmbiguousMatchStaysJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the witr binary; skipped under -short")
+	}
+	bin := buildWitr(t)
+
+	name, args := "sleep", []string{"60"}
+	if runtime.GOOS == "windows" {
+		name, args = "ping", []string{"-n", "60", "127.0.0.1"}
+	}
+	var children []int
+	for range 2 {
+		c := exec.Command(name, args...)
+		if err := c.Start(); err != nil {
+			t.Skipf("spawn %s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = c.Process.Kill(); _, _ = c.Process.Wait() })
+		children = append(children, c.Process.Pid)
+	}
+
+	type entry struct {
+		Error   string
+		Matches []struct{ PID int }
+	}
+	run := func(args ...string) ([]byte, int) {
+		out, err := exec.Command(bin, args...).Output()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return out, ee.ExitCode()
+		}
+		if err != nil {
+			t.Fatalf("witr %v: %v", args, err)
+		}
+		return out, 0
+	}
+	listsChildren := func(e entry) bool {
+		found := 0
+		for _, m := range e.Matches {
+			for _, c := range children {
+				if m.PID == c {
+					found++
+				}
+			}
+		}
+		return e.Error != "" && found == len(children)
+	}
+
+	out, code := run(name, "--json")
+	var single entry
+	if err := json.Unmarshal(out, &single); err != nil || code != ExitInvalidInput || !listsChildren(single) {
+		t.Errorf("witr %s --json: exit %d, err %v, want exit %d and both children listed:\n%s", name, code, err, ExitInvalidInput, out)
+	}
+
+	self := strconv.Itoa(os.Getpid())
+	for _, extra := range [][]string{nil, {"--env"}} {
+		args := append([]string{name, "--pid", self, "--json"}, extra...)
+		out, code := run(args...)
+		var all []entry
+		if err := json.Unmarshal(out, &all); err != nil || code != ExitInvalidInput || len(all) != 2 || !listsChildren(all[0]) {
+			t.Errorf("witr %v: exit %d, err %v, want a 2-entry array listing both children:\n%s", args, code, err, out)
 		}
 	}
 }

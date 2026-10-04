@@ -20,7 +20,9 @@ func GetResourceContext(pid int) *model.ResourceContext {
 
 	ctx := &model.ResourceContext{}
 
-	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "%cpu,rss").Output()
+	cmd := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "%cpu,rss")
+	cmd.Env = buildEnvForPS()
+	out, err := cmd.Output()
 	if err == nil {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		if len(lines) > 0 {
