@@ -195,17 +195,18 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 		if m.showAllPorts {
 			filterStatus = "ALL"
 		}
-		helpText = fmt.Sprintf("Total: %d [%s] | p/t/n/s: Sort | a: Toggle All | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.portTable.Rows()), filterStatus)
+		hint := ""
 		// Windows reports every socket's owner; elsewhere other users' are hidden.
 		if runtime.GOOS != "windows" && os.Geteuid() != 0 {
-			helpText += " | (use sudo to see all owners)"
+			hint = " (use sudo to see all owners)"
 		}
+		helpText = fmt.Sprintf("Total: %d [%s]%s | p/t/n/s: Sort | a: Toggle All | Esc/q: Quit | Tab: Focus | Up/Down: Scroll", len(m.portTable.Rows()), filterStatus, hint)
 	case tabContainers:
 		helpText = fmt.Sprintf("Total: %d | Enter: Detail | i/n/r/g/s: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll", len(m.containerTable.Rows()))
 	case tabLocks:
-		suffix := ""
+		hint := ""
 		if os.Geteuid() != 0 {
-			suffix = " | (use sudo for full paths)"
+			hint = " (use sudo for full paths)"
 		}
 		mode := "LOCKED"
 		if m.showAllFiles {
@@ -217,7 +218,7 @@ func (m MainModel) viewList(outerStyle lipgloss.Style) string {
 		if shown < total {
 			countText = fmt.Sprintf("%d of %d", shown, total)
 		}
-		helpText = fmt.Sprintf("%s [%s] | Enter: Detail | a: Toggle Open Files | p/n/t/m/f: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll%s", countText, mode, suffix)
+		helpText = fmt.Sprintf("%s [%s]%s | Enter: Detail | a: Toggle Open Files | p/n/t/m/f: Sort | /: Search | Esc/q: Quit | Up/Down: Scroll", countText, mode, hint)
 	}
 	footerContent := helpText
 	if m.version != "" {

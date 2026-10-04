@@ -92,6 +92,14 @@ func parentExitedAt(ancestry []model.Process) int {
 	return -1
 }
 
+// Untraced reports whether a source of type st leaves what started the
+// process unknown. Not on Windows: its ancestry routinely stops at a process
+// whose parent exited (Windows leaves a stale PPID instead of reparenting to
+// an init process), so an unknown source there is normal, not a finding.
+func Untraced(st model.SourceType) bool {
+	return st == model.SourceUnknown && runtime.GOOS != "windows"
+}
+
 // explainsOrphan reports whether src still names a real cause once the chain
 // is cut at an exited parent, since everything above the cut merely adopted
 // the process. Sources read from the process itself (its container, systemd
@@ -270,11 +278,7 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 	} else {
 		st = Detect(p).Type
 	}
-	// On Windows the ancestry frequently truncates at an orphaned process
-	// (Windows leaves a stale PPID instead of reparenting to an init process),
-	// so an unknown source is normal there — not a reliable "unsupervised"
-	// signal — and this warning would fire on most user processes.
-	if st == model.SourceUnknown && runtime.GOOS != "windows" {
+	if Untraced(st) {
 		if parentExitedAt(p) >= 0 {
 			w = append(w, "Original parent process has exited, so what started this process can't be traced")
 		} else {

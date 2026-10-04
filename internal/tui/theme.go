@@ -2,6 +2,8 @@ package tui
 
 import (
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/lipgloss"
@@ -14,12 +16,38 @@ import (
 // selection, so there the theme falls back to the 8 standard colors and the
 // selection to reverse video.
 var (
-	colorProfile = colorprofile.Env(os.Environ())
+	colorProfile = detectProfile(os.Environ(), os.Args[1:])
 	basicColors  = colorProfile < colorprofile.ANSI256
 	// NO_COLOR is set: no colors at all, but bold, faint and reverse video
 	// still render, so the selection stays visible.
 	noColor = colorProfile == colorprofile.ASCII
 )
+
+// detectProfile returns the terminal's color profile, or ASCII when color is
+// turned off: by NO_COLOR with any non-empty value (https://no-color.org), as
+// the CLI reads it, or by --no-color. The theme is built when the package
+// loads, before cobra parses flags, so the flag is read from the arguments.
+func detectProfile(environ, args []string) colorprofile.Profile {
+	for _, e := range environ {
+		if v, ok := strings.CutPrefix(e, "NO_COLOR="); ok && v != "" {
+			return colorprofile.ASCII
+		}
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "--no-color" {
+			return colorprofile.ASCII
+		}
+		if v, ok := strings.CutPrefix(a, "--no-color="); ok {
+			if off, _ := strconv.ParseBool(v); off {
+				return colorprofile.ASCII
+			}
+		}
+	}
+	return colorprofile.Env(environ)
+}
 
 // pick returns full, basic on terminals below 256 colors, or no color at all
 // under NO_COLOR.

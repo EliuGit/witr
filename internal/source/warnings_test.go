@@ -151,6 +151,16 @@ func TestWarningsUnknownSupervisor(t *testing.T) {
 	}
 }
 
+func TestUntraced(t *testing.T) {
+	t.Parallel()
+	if Untraced(model.SourceUnknown) != (runtime.GOOS != "windows") {
+		t.Errorf("Untraced(unknown) = %v on %s", Untraced(model.SourceUnknown), runtime.GOOS)
+	}
+	if Untraced(model.SourceSystemd) {
+		t.Error("a known source is traced")
+	}
+}
+
 func TestWarningsLongRunning(t *testing.T) {
 	t.Parallel()
 

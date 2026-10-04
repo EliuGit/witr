@@ -21,7 +21,12 @@ export const EXIT = {
   PERMISSION: 3,
   INVALID_INPUT: 4,
   INTERNAL: 5,
+  CAUSE_UNKNOWN: 6,
 };
+
+// Severity across several targets (app.go exitSeverity): cause unknown is a
+// finding, ranked below every failure.
+const SEVERITY = { 0: 0, 1: 1, 6: 2, 2: 3, 3: 4, 4: 5, 5: 6 };
 
 export class Engine {
   constructor(world) {
@@ -153,6 +158,8 @@ export class Engine {
       source,
       restartCount,
       warnings: proc.warnings || [],
+      // Result.Container: the runtime's details for a containerized process.
+      container: (this.world.containers || []).find((c) => proc.containerId && c.id === proc.containerId) || null,
     };
   }
 
@@ -187,7 +194,7 @@ export class Engine {
       }
       const r = this.processTarget(t, flags, multiMode, jsonResults);
       out += r.text;
-      if (r.exit > highest) highest = r.exit;
+      if (SEVERITY[r.exit] > SEVERITY[highest]) highest = r.exit;
     });
 
     if (flags.json && multiMode) {
@@ -202,26 +209,14 @@ export class Engine {
     if (flags.env) return this.processEnvTarget(t, flags, multiMode, jsonResults);
     if (t.type === 'container') return this.processContainerTarget(t, flags, multiMode, jsonResults);
 
-    let pids;
-    if (t.type === 'pid') {
-      const pid = parseInt(t.value, 10);
-      pids = this.procByPid.has(pid) ? [pid] : [];
-    } else if (t.type === 'port') {
-      const pid = this.resolvePort(parseInt(t.value, 10));
-      pids = pid ? [pid] : [];
-      if (!pid) {
-        const c = this.resolveContainerByPort(parseInt(t.value, 10));
-        if (c) return this.renderSingleContainer(c, `port ${t.value}`, flags, multiMode, jsonResults);
-      }
-    } else if (t.type === 'file') {
-      const pid = this.resolveFile(t.value);
-      pids = pid ? [pid] : [];
-    } else {
-      pids = this.resolveName(t.value, flags.exact);
+    const pids = this.resolvePids(t, flags.exact);
+    if (pids.length === 0 && t.type === 'port') {
+      const c = this.resolveContainerByPort(parseInt(t.value, 10));
+      if (c) return this.renderContainer(c, `port ${t.value}`, t, flags, multiMode, jsonResults);
     }
 
     if (pids.length === 0) {
-      return { text: this.notFound(t, flags, jsonResults), exit: EXIT.NOT_FOUND };
+      return { text: this.notFound(t, flags, multiMode, jsonResults), exit: EXIT.NOT_FOUND };
     }
     if (pids.length > 1) {
       if (multiMode && flags.json) {
@@ -232,8 +227,26 @@ export class Engine {
       return { text: this.printMultiMatch(pids, flags.color, hint), exit: EXIT.INVALID_INPUT };
     }
 
-    const r = this.buildResult(pids[0]);
+    return this.renderResult(this.buildResult(pids[0]), t, flags, multiMode, jsonResults);
+  }
 
+  resolvePids(t, exact) {
+    if (t.type === 'pid') {
+      const pid = parseInt(t.value, 10);
+      return this.procByPid.has(pid) ? [pid] : [];
+    }
+    if (t.type === 'port') {
+      const pid = this.resolvePort(parseInt(t.value, 10));
+      return pid ? [pid] : [];
+    }
+    if (t.type === 'file') {
+      const pid = this.resolveFile(t.value);
+      return pid ? [pid] : [];
+    }
+    return this.resolveName(t.value, exact);
+  }
+
+  renderResult(r, t, flags, multiMode, jsonResults) {
     if (flags.json) {
       let js;
       if (flags.short) js = toTreeJSON(r);
@@ -254,14 +267,31 @@ export class Engine {
   }
 
   processEnvTarget(t, flags, multiMode, jsonResults) {
-    const pids = t.type === 'pid'
-      ? (this.procByPid.has(parseInt(t.value, 10)) ? [parseInt(t.value, 10)] : [])
-      : this.resolveName(t.value, flags.exact);
-    if (pids.length === 0) return { text: 'No matching process found.\n', exit: EXIT.NOT_FOUND };
-    if (pids.length > 1) {
-      return { text: this.printMultiMatch(pids, flags.color, 'witr --pid <pid> --env'), exit: EXIT.INVALID_INPUT };
+    const fail = (msg, exit) => {
+      if (flags.json) {
+        jsonResults.push(jsonErrorEntry(t, msg));
+        return { text: '', exit };
+      }
+      return { text: multiMode ? `Error: ${msg}\n` : `error: ${msg}\n`, exit };
+    };
+    let pid;
+    if (t.type === 'container') {
+      const matches = this.resolveContainer(t.value, flags.exact);
+      if (matches.length === 0) return fail(notFoundMessage(t), EXIT.NOT_FOUND);
+      if (matches.length > 1) return { text: printContainerMultiMatch(matches, flags.color), exit: EXIT.INVALID_INPUT };
+      if (!this.procByPid.has(matches[0].pid)) {
+        return fail(`container ${matches[0].name} has no process visible from here`, EXIT.NOT_FOUND);
+      }
+      pid = matches[0].pid;
+    } else {
+      const pids = this.resolvePids(t, flags.exact);
+      if (pids.length === 0) return fail(notFoundMessage(t), EXIT.NOT_FOUND);
+      if (pids.length > 1) {
+        return { text: this.printMultiMatch(pids, flags.color, 'witr --pid <pid> --env'), exit: EXIT.INVALID_INPUT };
+      }
+      pid = pids[0];
     }
-    const r = this.buildResult(pids[0]);
+    const r = this.buildResult(pid);
     if (flags.json) {
       const js = toEnvJSON(r);
       if (multiMode) { jsonResults.push(js); return { text: '', exit: EXIT.OK }; }
@@ -273,12 +303,26 @@ export class Engine {
   processContainerTarget(t, flags, multiMode, jsonResults) {
     const matches = this.resolveContainer(t.value, flags.exact);
     if (matches.length === 0) {
-      return { text: this.notFound(t, flags, jsonResults), exit: EXIT.NOT_FOUND };
+      return { text: this.notFound(t, flags, multiMode, jsonResults), exit: EXIT.NOT_FOUND };
     }
     if (matches.length > 1) {
       return { text: printContainerMultiMatch(matches, flags.color), exit: EXIT.INVALID_INPUT };
     }
-    return this.renderSingleContainer(matches[0], `container ${t.value}`, flags, multiMode, jsonResults);
+    return this.renderContainer(matches[0], `container ${matches[0].name}`, t, flags, multiMode, jsonResults);
+  }
+
+  // Mirrors analyzeContainer: a container whose main process is visible gets
+  // the full analysis of that process, with the container's details;
+  // otherwise the runtime's own view of the container.
+  renderContainer(match, label, t, flags, multiMode, jsonResults) {
+    const proc = this.procByPid.get(match.pid);
+    if (!proc) return this.renderSingleContainer(match, label, flags, multiMode, jsonResults);
+    const r = this.buildResult(proc.pid);
+    const shown = { ...proc, container: formatContainerLine(match) };
+    r.process = shown;
+    r.ancestry = [...r.ancestry.slice(0, -1), shown];
+    r.container = match;
+    return this.renderResult(r, t, flags, multiMode, jsonResults);
   }
 
   renderSingleContainer(match, label, flags, multiMode, jsonResults) {
@@ -293,13 +337,14 @@ export class Engine {
     return { text: renderContainerFallback(label, match, flags.color, flags.verbose, this), exit: EXIT.OK };
   }
 
-  notFound(t, flags, jsonResults) {
+  notFound(t, flags, multiMode, jsonResults) {
+    const msg = notFoundMessage(t);
     if (flags.json) {
-      jsonResults.push(jsonErrorEntry(t, 'no matching process or service found'));
+      jsonResults.push(jsonErrorEntry(t, msg));
       return '';
     }
-    const q = t.value;
-    return `Error: no running process or service named "${q}"\n\n` +
+    if (multiMode) return `Error: ${msg}\n`;
+    return `${msg}\n\n` +
       `No matching process or service found. Please check your query or try a different name/port/PID.\n` +
       `For usage and options, run: witr --help\n`;
   }
@@ -351,6 +396,12 @@ export class Engine {
     if (proc.container) {
       o += color ? `${ESC.blue}Container${ESC.reset}   : ${proc.container}\n` : `Container   : ${proc.container}\n`;
     }
+    if (r.container) {
+      const c = r.container;
+      if (c.image) o += color ? `${ESC.blue}Image${ESC.reset}       : ${c.image}\n` : `Image       : ${c.image}\n`;
+      if (c.ports) o += color ? `${ESC.blue}Published${ESC.reset}   : ${c.ports}\n` : `Published   : ${c.ports}\n`;
+      o += composeOrigin(c, color);
+    }
     if (proc.service) {
       o += color ? `${ESC.blue}Service${ESC.reset}     : ${proc.service}\n` : `Service     : ${proc.service}\n`;
     }
@@ -374,11 +425,14 @@ export class Engine {
     o += color ? `\n${ESC.magenta}Why It Exists${ESC.reset} :\n  ` : `\nWhy It Exists :\n  `;
     r.ancestry.forEach((p, i) => {
       const name = chainName(p);
+      const gap = parentGap(r.ancestry, i);
       if (color) {
+        if (gap) o += `${ESC.dimYellow}${gap}${ESC.reset} ${ESC.magenta}→${ESC.reset} `;
         const nameColor = i === r.ancestry.length - 1 ? ESC.green : '';
         o += `${nameColor}${name}${ESC.reset} (${ESC.dim}pid ${p.pid}${ESC.reset})`;
         if (i < r.ancestry.length - 1) o += ` ${ESC.magenta}→${ESC.reset} `;
       } else {
+        if (gap) o += `${gap} → `;
         o += `${name} (pid ${p.pid})`;
         if (i < r.ancestry.length - 1) o += ` → `;
       }
@@ -517,10 +571,20 @@ export class Engine {
 }
 
 function exitFor(r) {
+  if (r.source.type === 'unknown') return EXIT.CAUSE_UNKNOWN;
   return r.warnings && r.warnings.length > 0 ? EXIT.WARNINGS : EXIT.OK;
 }
 
 // ---- short / tree / children / env (short.go, tree.go, children.go) -----
+
+// parentGap mirrors output.ParentGap: the placeholder shown just above
+// chain[i] when the process that started it has exited.
+function parentGap(chain, i) {
+  const p = chain[i];
+  if (!p.parentExited) return '';
+  if (i === 0 && p.ppid > 0) return `? (parent pid ${p.ppid} exited)`;
+  return '? (original parent exited)';
+}
 
 function chainName(p) {
   if (p.command) return p.command;
@@ -532,6 +596,8 @@ function renderShort(r, color) {
   let o = '';
   r.ancestry.forEach((proc, i) => {
     if (i > 0) o += color ? `${ESC.magenta} → ${ESC.reset}` : ` → `;
+    const gap = parentGap(r.ancestry, i);
+    if (gap) o += color ? `${ESC.dimYellow}${gap}${ESC.reset}${ESC.magenta} → ${ESC.reset}` : `${gap} → `;
     if (color) {
       const nameColor = i === r.ancestry.length - 1 ? ESC.green : '';
       o += `${nameColor}${chainName(proc)}${ESC.reset} (${ESC.dim}pid ${proc.pid}${ESC.reset})`;
@@ -545,9 +611,21 @@ function renderShort(r, color) {
 function renderTree(r, color) {
   let o = '';
   const chain = r.ancestry;
+  let depth = 0;
+  const branch = () => {
+    if (depth > 0) {
+      const indent = '  '.repeat(depth);
+      o += color ? `${indent}${ESC.magenta}└─ ${ESC.reset}` : `${indent}└─ `;
+    }
+    depth++;
+  };
   chain.forEach((proc, i) => {
-    const indent = '  '.repeat(i);
-    if (i > 0) o += color ? `${indent}${ESC.magenta}└─ ${ESC.reset}` : `${indent}└─ `;
+    const gap = parentGap(chain, i);
+    if (gap) {
+      branch();
+      o += color ? `${ESC.dimYellow}${gap}${ESC.reset}\n` : `${gap}\n`;
+    }
+    branch();
     if (color) {
       const cmdColor = i === chain.length - 1 ? ESC.green : '';
       o += `${cmdColor}${chainName(proc)}${ESC.reset} (${ESC.dim}pid ${proc.pid}${ESC.reset})\n`;
@@ -558,7 +636,7 @@ function renderTree(r, color) {
 
   const children = r.children;
   if (children.length === 0) return o;
-  const baseIndent = '  '.repeat(chain.length);
+  const baseIndent = '  '.repeat(depth);
   const limit = 10;
   const count = children.length;
   for (let i = 0; i < children.length; i++) {
@@ -691,6 +769,7 @@ function renderContainerFallback(label, m, color, verbose, engine) {
   }
   o += '\n';
   if (m.image) o += color ? `${ESC.blue}Image${ESC.reset}       : ${m.image}\n` : `Image       : ${m.image}\n`;
+  o += composeOrigin(m, color);
   if (m.command) o += color ? `${ESC.blue}Command${ESC.reset}     : ${m.command}\n` : `Command     : ${m.command}\n`;
   if (m.startedAgo != null) {
     const [rel, abs] = formatStartedAt(engine.now() - m.startedAgo * 1000, engine.now());
@@ -709,16 +788,44 @@ function renderContainerFallback(label, m, color, verbose, engine) {
 
   if (m.ports) o += containerSockets(m.ports, color);
 
-  if (verbose) {
-    if (m.mounts) o += color ? `\n${ESC.blue}Mounts${ESC.reset}      : ${m.mounts}\n` : `\nMounts      : ${m.mounts}\n`;
-    if (m.composeConfigFile) o += color ? `${ESC.blue}Compose File${ESC.reset}: ${m.composeConfigFile}\n` : `Compose File: ${m.composeConfigFile}\n`;
-    if (m.composeWorkingDir) o += color ? `${ESC.blue}Compose Dir${ESC.reset} : ${m.composeWorkingDir}\n` : `Compose Dir : ${m.composeWorkingDir}\n`;
+  if (verbose && m.mounts) {
+    o += color ? `\n${ESC.blue}Mounts${ESC.reset}      : ${m.mounts}\n` : `\nMounts      : ${m.mounts}\n`;
   }
 
   o += color
     ? `\n${ESC.dimYellow}Note${ESC.reset}        : The owning process is not visible in this environment.\n`
     : `\nNote        : The owning process is not visible in this environment.\n`;
   return o;
+}
+
+// composeOrigin mirrors printComposeOrigin: where a Compose-managed
+// container was defined on the host.
+function composeOrigin(m, color) {
+  let o = '';
+  if (m.composeConfigFile) o += color ? `${ESC.blue}Compose File${ESC.reset}: ${m.composeConfigFile}\n` : `Compose File: ${m.composeConfigFile}\n`;
+  if (m.composeWorkingDir) o += color ? `${ESC.blue}Compose Dir${ESC.reset} : ${m.composeWorkingDir}\n` : `Compose Dir : ${m.composeWorkingDir}\n`;
+  return o;
+}
+
+// formatContainerLine mirrors output.FormatContainerLine, the Container line
+// of a process reached through its container.
+function formatContainerLine(m) {
+  let s = m.runtime ? `${m.runtime}: ${m.name}` : m.name;
+  const id = shortContainerID(m.id);
+  if (id) s += ` (id ${id})`;
+  const tag = containerStateTag(m);
+  if (tag) s += ` [${tag}]`;
+  return s;
+}
+
+function notFoundMessage(t) {
+  switch (t.type) {
+    case 'pid': return `process ${t.value} does not exist`;
+    case 'port': return `no process bound to or connected on port ${t.value}`;
+    case 'file': return `no process found holding file: ${t.value}`;
+    case 'container': return `no container found matching "${t.value}"`;
+    default: return `no running process or service named "${t.value}"`;
+  }
 }
 
 function containerSockets(ports, color) {
@@ -780,16 +887,38 @@ function toJSON(r, engine) {
       WorkingDir: r.process.workingDir || '', GitRepo: r.process.gitRepo || '',
       GitBranch: r.process.gitBranch || '',
     },
-    Ancestry: r.ancestry.map((p) => ({ PID: p.pid, Command: p.command })),
+    Ancestry: r.ancestry.map(shortEntry),
     Source: { Type: r.source.type, Name: r.source.name || '', Description: r.source.description || '' },
     Warnings: r.warnings || [],
   };
+  if (r.container) {
+    const c = r.container;
+    obj.Container = {
+      Runtime: c.runtime, ID: c.id, Name: c.name, Image: c.image || '', Command: c.command || '',
+      State: c.state || '', Status: c.status || '', Health: c.health || '',
+      Networks: c.networks || '', Mounts: c.mounts || '', Ports: c.ports || '',
+    };
+    for (const k of ['composeProject', 'composeService', 'composeConfigFile', 'composeWorkingDir']) {
+      if (c[k]) obj.Container[k[0].toUpperCase() + k.slice(1)] = c[k];
+    }
+  }
   return JSON.stringify(obj, null, 2);
 }
 
+// shortEntry mirrors the short/tree JSON process, which keeps the PPID where
+// the process that started it has exited.
+function shortEntry(p) {
+  const e = { PID: p.pid, Command: p.command };
+  if (p.parentExited) {
+    e.PPID = p.ppid;
+    e.ParentExited = true;
+  }
+  return e;
+}
+
 function toTreeJSON(r) {
-  const obj = { Ancestry: r.ancestry.map((p) => ({ PID: p.pid, Command: p.command })) };
-  if (r.children.length > 0) obj.Children = r.children.map((p) => ({ PID: p.pid, Command: p.command }));
+  const obj = { Ancestry: r.ancestry.map(shortEntry) };
+  if (r.children.length > 0) obj.Children = r.children.map(shortEntry);
   return JSON.stringify(obj, null, 2);
 }
 

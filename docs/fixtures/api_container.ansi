@@ -1,0 +1,22 @@
+[94mTarget[0m      : gunicorn
+
+[94mProcess[0m     : [92mgunicorn[0m ([90mpid 3141[0m)
+[94mUser[0m        : root
+[94mContainer[0m   : docker: expense-manager-api-1 (id 7c41e0b9a2d3)
+[94mImage[0m       : expense-manager-api:1.4.2
+[94mPublished[0m   : 0.0.0.0:8081->8080/tcp
+[94mCompose File[0m: /srv/expense-manager/docker-compose.yml
+[94mCompose Dir[0m : /srv/expense-manager
+[94mCommand[0m     : /usr/local/bin/python /usr/local/bin/gunicorn app:app --bind 0.0.0.0:8080 --workers 2
+[95mStarted[0m     : 5 days ago (Tue 2026-09-29 08:13:55 +00:00)
+
+[95mWhy It Exists[0m :
+  systemd[0m ([90mpid 1[0m) [95m→[0m containerd-shim[0m ([90mpid 3120[0m) [95m→[0m [92mgunicorn[0m ([90mpid 3141[0m)
+
+[96mSource[0m      : docker (container)
+
+[96mWorking Dir[0m : /app
+
+[91mWarnings[0m    :
+  • Process is running as root
+  • Container has no healthcheck configured

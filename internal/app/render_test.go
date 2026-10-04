@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,6 +15,34 @@ func sampleResult() model.Result {
 		Ancestry: []model.Process{{PID: 1, Command: "systemd"}, {PID: 1234, Command: "nginx"}},
 		Source:   model.Source{Type: model.SourceSystemd, Name: "nginx.service"},
 		Warnings: []string{"Process is running as root"},
+	}
+}
+
+// An untraceable cause gets its own exit code in every output mode; Windows
+// excluded, where an unknown source is routine.
+func TestRenderResultExitCodes(t *testing.T) {
+	t.Parallel()
+	untraced := sampleResult()
+	untraced.Source = model.Source{Type: model.SourceUnknown}
+	wantUntraced := ExitCauseUnknown
+	if runtime.GOOS == "windows" {
+		wantUntraced = ExitWarnings
+	}
+	clean := sampleResult()
+	clean.Warnings = nil
+
+	for _, f := range []appFlags{{}, {short: true}, {tree: true}, {warn: true}, {json: true}} {
+		var b bytes.Buffer
+		var jr []string
+		if got := renderResult(&b, untraced, f, false, &jr); got != wantUntraced {
+			t.Errorf("%+v: untraced exit = %d, want %d", f, got, wantUntraced)
+		}
+		if got := renderResult(&b, sampleResult(), f, false, &jr); got != ExitWarnings {
+			t.Errorf("%+v: warnings exit = %d, want %d", f, got, ExitWarnings)
+		}
+		if got := renderResult(&b, clean, f, false, &jr); got != ExitOK {
+			t.Errorf("%+v: clean exit = %d, want %d", f, got, ExitOK)
+		}
 	}
 }
 

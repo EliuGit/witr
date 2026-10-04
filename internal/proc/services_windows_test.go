@@ -42,6 +42,19 @@ func TestServiceMapCacheRefreshesAfterTTL(t *testing.T) {
 	}
 }
 
+// Display names come from the same scan, in any case of the service name.
+func TestServiceDisplayName(t *testing.T) {
+	if got := ServiceDisplayName("EventLog"); got == "" || got == "EventLog" {
+		t.Errorf("ServiceDisplayName(EventLog) = %q, want its display name", got)
+	}
+	if ServiceDisplayName("eventlog") != ServiceDisplayName("EventLog") {
+		t.Error("service names should match in any case")
+	}
+	if got := ServiceDisplayName("witr-no-such-service"); got != "" {
+		t.Errorf("ServiceDisplayName(missing) = %q, want empty", got)
+	}
+}
+
 func TestUtf16PtrToStringNilSafe(t *testing.T) {
 	if got := utf16PtrToString(nil); got != "" {
 		t.Errorf("utf16PtrToString(nil) = %q, want empty string", got)

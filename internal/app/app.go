@@ -106,7 +106,23 @@ const (
 	// ExitInternalError is distinct from ExitWarnings so scripts can tell an
 	// unexpected witr failure apart from "process found, has warnings".
 	ExitInternalError = 5
+	// ExitCauseUnknown: the process was found, but what started it can't be
+	// traced. Its warnings say why.
+	ExitCauseUnknown = 6
 )
+
+// exitSeverity ranks exit codes across several targets, where the most
+// severe wins. Cause unknown is a finding, like warnings, so it ranks below
+// every failure despite its number.
+var exitSeverity = map[int]int{
+	ExitOK:            0,
+	ExitWarnings:      1,
+	ExitCauseUnknown:  2,
+	ExitNotFound:      3,
+	ExitPermission:    4,
+	ExitInvalidInput:  5,
+	ExitInternalError: 6,
+}
 
 // exitCodeError wraps an error with a specific exit code.
 type exitCodeError struct {
@@ -217,7 +233,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 		}
 
 		exitCode := processTarget(cmd, outw, outp, t, flags, multiMode, &jsonResults)
-		if exitCode > highestExit {
+		if exitSeverity[exitCode] > exitSeverity[highestExit] {
 			highestExit = exitCode
 		}
 	}
@@ -775,7 +791,10 @@ func renderResult(outw io.Writer, res model.Result, flags appFlags, multiMode bo
 		output.RenderStandard(outw, res, colorEnabled, flags.verbose)
 	}
 
-	if len(res.Warnings) > 0 {
+	switch {
+	case source.Untraced(res.Source.Type):
+		return ExitCauseUnknown
+	case len(res.Warnings) > 0:
 		return ExitWarnings
 	}
 	return ExitOK

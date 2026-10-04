@@ -56,4 +56,19 @@ func TestExitCodesDistinct(t *testing.T) {
 	if ExitInternalError != 5 {
 		t.Errorf("ExitInternalError = %d, want 5 (documented)", ExitInternalError)
 	}
+	if ExitCauseUnknown != 6 {
+		t.Errorf("ExitCauseUnknown = %d, want 6 (documented)", ExitCauseUnknown)
+	}
+}
+
+// Across several targets the most severe code wins: cause unknown outranks
+// plain warnings but not any failure.
+func TestExitSeverityOrder(t *testing.T) {
+	t.Parallel()
+	order := []int{ExitOK, ExitWarnings, ExitCauseUnknown, ExitNotFound, ExitPermission, ExitInvalidInput, ExitInternalError}
+	for i := 1; i < len(order); i++ {
+		if exitSeverity[order[i]] <= exitSeverity[order[i-1]] {
+			t.Errorf("exit %d should rank above exit %d", order[i], order[i-1])
+		}
+	}
 }

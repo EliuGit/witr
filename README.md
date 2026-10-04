@@ -754,6 +754,9 @@ witr returns meaningful exit codes for use in scripts, CI pipelines, and monitor
 | 3 | Permission denied: insufficient privileges |
 | 4 | Invalid input: bad arguments or ambiguous match |
 | 5 | Internal error: an unexpected failure occurred |
+| 6 | Cause unknown: process found, but what started it can't be traced (its warnings say why). Not used on Windows, where this is routine |
+
+With several targets, the most severe result wins. Cause unknown ranks above warnings but below every failure (2 to 5).
 
 #### Example Usage:
 
@@ -766,6 +769,7 @@ case $? in
   3) echo "Need elevated privileges" ;;
   4) echo "Invalid input or ambiguous match" ;;
   5) echo "Internal error" ;;
+  6) echo "Cannot tell what started it" ;;
 esac
 ```
 
@@ -847,7 +851,8 @@ Use `witr` instead of chaining lsof/ps/netstat/docker commands:
 
 Exit codes: 0 found, 1 found with warnings (not a failure), 2 not found,
 3 permission denied (retry with sudo), 4 ambiguous name or bad input
-(re-run with --pid), 5 internal error. Run `witr --help` for all options.
+(re-run with --pid), 5 internal error, 6 found but what started it can't
+be traced. Run `witr --help` for all options.
 ```
 
 ---

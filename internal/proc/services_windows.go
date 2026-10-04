@@ -4,6 +4,7 @@ package proc
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,16 +43,42 @@ type enumServiceStatusProcessW struct {
 	ServiceStatusProcess serviceStatusProcess
 }
 
+// serviceTable is one scan of the installed Windows services.
+type serviceTable struct {
+	byPID   map[int]string    // running service PID → service name
+	display map[string]string // lower-cased service name → display name
+}
+
 var (
-	serviceMapCache     map[int]string
+	serviceMapCache     *serviceTable
 	serviceMapCacheTime time.Time
 	serviceMapCacheMu   sync.Mutex
 	serviceMapCacheTTL  = 2 * time.Second
 )
 
 // serviceMapForPIDs returns a PID → service-name map for every running
-// Windows service. Cached so an ancestry walk pays one SCM scan, not N.
+// Windows service.
 func serviceMapForPIDs() (map[int]string, error) {
+	t, err := scanServices()
+	if err != nil {
+		return nil, err
+	}
+	return t.byPID, nil
+}
+
+// ServiceDisplayName returns the name Windows shows for a service, as in the
+// Services console, or "" if no such service is installed.
+func ServiceDisplayName(name string) string {
+	t, err := scanServices()
+	if err != nil {
+		return ""
+	}
+	return t.display[strings.ToLower(name)]
+}
+
+// scanServices lists the installed Windows services. Cached so an ancestry
+// walk pays one SCM scan, not N.
+func scanServices() (*serviceTable, error) {
 	serviceMapCacheMu.Lock()
 	defer serviceMapCacheMu.Unlock()
 
@@ -79,7 +106,7 @@ func serviceMapForPIDs() (map[int]string, error) {
 		0,
 	)
 	if bytesNeeded == 0 {
-		serviceMapCache = map[int]string{}
+		serviceMapCache = &serviceTable{byPID: map[int]string{}, display: map[string]string{}}
 		serviceMapCacheTime = time.Now()
 		return serviceMapCache, nil
 	}
@@ -103,30 +130,31 @@ func serviceMapForPIDs() (map[int]string, error) {
 		return nil, fmt.Errorf("EnumServicesStatusEx: %w", callErr)
 	}
 
-	out := make(map[int]string, count)
+	t := &serviceTable{byPID: make(map[int]string, count), display: make(map[string]string, count)}
 	entrySize := unsafe.Sizeof(enumServiceStatusProcessW{})
 	base := unsafe.Pointer(&buf[0])
 	for i := uintptr(0); i < uintptr(count); i++ {
 		entry := (*enumServiceStatusProcessW)(unsafe.Pointer(uintptr(base) + i*entrySize))
+		name := utf16PtrToString(entry.ServiceName)
+		if name == "" {
+			continue
+		}
+		t.display[strings.ToLower(name)] = utf16PtrToString(entry.DisplayName)
 		pid := int(entry.ServiceStatusProcess.ProcessId)
 		if pid == 0 {
 			// Service registered but not currently running.
 			continue
 		}
-		name := utf16PtrToString(entry.ServiceName)
-		if name == "" {
-			continue
-		}
 		// First writer wins so share-process hosts (svchost.exe) keep a
 		// stable name across calls.
-		if _, exists := out[pid]; !exists {
-			out[pid] = name
+		if _, exists := t.byPID[pid]; !exists {
+			t.byPID[pid] = name
 		}
 	}
 
-	serviceMapCache = out
+	serviceMapCache = t
 	serviceMapCacheTime = time.Now()
-	return out, nil
+	return t, nil
 }
 
 // utf16PtrToString converts a null-terminated UTF-16 pointer to a Go string.

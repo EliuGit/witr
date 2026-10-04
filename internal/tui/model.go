@@ -38,13 +38,16 @@ var (
 
 	placeholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
 
+	// The layout reserves one line for the footer: text that doesn't fit is
+	// cut rather than wrapped onto a second line.
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
 			Faint(basicColors).
 			Border(lipgloss.NormalBorder(), true, false, false, false).
 			BorderForeground(colorBorderDim).
 			Padding(0, 1).
-			Width(100)
+			Width(100).
+			MaxHeight(2)
 
 	activeTabStyle = lipgloss.NewStyle().
 			Foreground(colorOnAccent).

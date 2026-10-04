@@ -41,7 +41,9 @@ type source struct {
 }
 type proc struct {
 	PID, PPID                      int
+	ParentExited                   bool
 	Command, Cmdline, User         string
+	Container, ContainerID         string
 	StartedAgo                     int64
 	WorkingDir, GitRepo, GitBranch string
 	Forked, Health                 string
@@ -56,9 +58,18 @@ type proc struct {
 	Warnings                       []string
 }
 type world struct {
-	Processes []proc                `json:"processes"`
-	Locks     []lock                `json:"locks"`
-	Overrides map[string]socketInfo `json:"socketOverrides"`
+	Processes  []proc                `json:"processes"`
+	Containers []container           `json:"containers"`
+	Locks      []lock                `json:"locks"`
+	Overrides  map[string]socketInfo `json:"socketOverrides"`
+}
+type container struct {
+	Runtime, ID, Name, Image, Command, State, Status, Health string
+	Networks, Mounts, Ports                                  string
+	ComposeProject, ComposeService                           string
+	ComposeConfigFile, ComposeWorkingDir                     string
+	CreatedAgo, StartedAgo                                   int64
+	PID                                                      int // main process, when visible
 }
 type lock struct {
 	PID  int
@@ -72,7 +83,7 @@ type socketInfo struct {
 type fixture struct {
 	name  string // output filename stem
 	mode  string // standard|verbose|short|tree|warnings|env
-	kind  string // name|pid|port|file
+	kind  string // name|pid|port|file|container
 	value string
 }
 
@@ -99,6 +110,11 @@ func main() {
 		{"python_warnings", "warnings", "pid", "8123"},
 		{"node_env", "env", "pid", "14233"},
 		{"postgres_port_verbose", "verbose", "port", "5432"},
+		{"rsync_standard", "standard", "pid", "27310"},
+		{"rsync_short", "short", "pid", "27310"},
+		{"rsync_tree", "tree", "pid", "27310"},
+		{"api_container", "standard", "container", "expense-manager-api-1"},
+		{"redis_container", "standard", "container", "expense-manager-cache-1"},
 	}
 
 	outDir := filepath.Join(root, "docs/fixtures")
@@ -110,16 +126,42 @@ func main() {
 	var cases []map[string]string
 
 	for _, f := range fixtures {
+		var r model.Result
+		var fallback *model.ContainerMatch // a container with no visible process
 		pid := resolve(w, byPID, f.kind, f.value)
-		if pid == 0 {
-			fmt.Fprintf(os.Stderr, "fixture %s: could not resolve %s %s\n", f.name, f.kind, f.value)
-			os.Exit(1)
+		if f.kind == "container" {
+			// Mirrors analyzeContainer: the main process gets the full
+			// analysis when it is visible, else the runtime's view renders.
+			c := findContainer(w, f.value)
+			if c == nil {
+				fmt.Fprintf(os.Stderr, "fixture %s: no container %s\n", f.name, f.value)
+				os.Exit(1)
+			}
+			match := c.toMatch(now)
+			if _, ok := byPID[c.PID]; ok {
+				pid = c.PID
+				r = buildResult(w, byPID, pid, now, f)
+				r.Container = match
+				r.Process.Container = output.FormatContainerLine(match)
+				r.Ancestry[len(r.Ancestry)-1].Container = r.Process.Container
+			} else {
+				fallback = match
+			}
+		} else {
+			if pid == 0 {
+				fmt.Fprintf(os.Stderr, "fixture %s: could not resolve %s %s\n", f.name, f.kind, f.value)
+				os.Exit(1)
+			}
+			r = buildResult(w, byPID, pid, now, f)
 		}
-		r := buildResult(w, byPID, pid, now, f)
 
 		for _, color := range []bool{false, true} {
 			var buf bytes.Buffer
-			render(&buf, r, f.mode, color)
+			if fallback != nil {
+				output.RenderContainerFallback(&buf, "container "+fallback.Name, fallback, color, f.mode == "verbose")
+			} else {
+				render(&buf, r, f.mode, color)
+			}
 			ext := ".txt"
 			if color {
 				ext = ".ansi"
@@ -211,9 +253,45 @@ func resolve(w world, byPID map[int]proc, kind, value string) int {
 	return 0
 }
 
+func findContainer(w world, name string) *container {
+	for i, c := range w.Containers {
+		if c.Name == name {
+			return &w.Containers[i]
+		}
+	}
+	return nil
+}
+
+func findContainerByID(w world, id string) *container {
+	for i, c := range w.Containers {
+		if id != "" && c.ID == id {
+			return &w.Containers[i]
+		}
+	}
+	return nil
+}
+
+func (c container) toMatch(now time.Time) *model.ContainerMatch {
+	m := &model.ContainerMatch{
+		Runtime: c.Runtime, ID: c.ID, Name: c.Name, Image: c.Image, Command: c.Command,
+		State: c.State, Status: c.Status, Health: c.Health,
+		Networks: c.Networks, Mounts: c.Mounts, Ports: c.Ports,
+		ComposeProject: c.ComposeProject, ComposeService: c.ComposeService,
+		ComposeConfigFile: c.ComposeConfigFile, ComposeWorkingDir: c.ComposeWorkingDir,
+	}
+	if c.StartedAgo != 0 {
+		m.StartedAt = now.Add(-time.Duration(c.StartedAgo) * time.Second)
+	}
+	if c.CreatedAgo != 0 {
+		m.CreatedAt = now.Add(-time.Duration(c.CreatedAgo) * time.Second)
+	}
+	return m
+}
+
 func toModelProc(p proc, now time.Time) model.Process {
 	mp := model.Process{
-		PID: p.PID, PPID: p.PPID, Command: p.Command, Cmdline: p.Cmdline,
+		PID: p.PID, PPID: p.PPID, ParentExited: p.ParentExited, Command: p.Command, Cmdline: p.Cmdline,
+		Container: p.Container, ContainerID: p.ContainerID,
 		User: p.User, WorkingDir: p.WorkingDir, GitRepo: p.GitRepo, GitBranch: p.GitBranch,
 		Forked: p.Forked, Health: p.Health, Env: p.Env,
 		ThreadCount: p.ThreadCount, FDCount: p.FDCount, FDLimit: uint64(p.FDLimit),
@@ -278,6 +356,9 @@ func buildResult(w world, byPID map[int]proc, pid int, now time.Time, f fixture)
 		Source:       src,
 		RestartCount: restart,
 		Warnings:     target.Warnings,
+	}
+	if c := findContainerByID(w, target.ContainerID); c != nil {
+		r.Container = c.toMatch(now)
 	}
 	if len(target.LockedFiles) > 0 {
 		r.FileContext = &model.FileContext{LockedFiles: target.LockedFiles}

@@ -1,0 +1,4 @@
+systemd[0m ([90mpid 1[0m)
+  [95m└─ [0m[93m? (original parent exited)[0m
+    [95m└─ [0m[92mrsync[0m ([90mpid 27310[0m)
+      [95m└─ [0mssh ([90mpid 27311[0m)

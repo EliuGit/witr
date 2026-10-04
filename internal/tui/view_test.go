@@ -168,3 +168,13 @@ func TestViewQuittingIsBlank(t *testing.T) {
 		t.Errorf("a quitting model should render nothing, got %q", out)
 	}
 }
+
+// The layout reserves one footer line, so a footer too long for the terminal
+// is cut instead of wrapping onto a second line and pushing the title off
+// screen.
+func TestFooterStaysOneLine(t *testing.T) {
+	long := strings.Repeat("Esc/q: Quit | ", 20)
+	if got := lipgloss.Height(footerStyle.Width(76).Render(long)); got != 2 {
+		t.Errorf("footer height = %d, want its rule plus one line", got)
+	}
+}
