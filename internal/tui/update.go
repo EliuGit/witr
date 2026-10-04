@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pranshuparmar/witr/internal/proc"
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -962,16 +961,8 @@ func (m MainModel) handlePortAreaMouse(msg tea.MouseMsg, contentX int, isClick, 
 
 		// Double Click (Attached Processes): Open Detail
 		if isDoubleClick && isClick && detailMsg.Y > 0 {
-			selected := m.portDetailTable.SelectedRow()
-			if len(selected) > 0 {
-				pid := 0
-				fmt.Sscanf(selected[0], "%d", &pid)
-				if pid > 0 {
-					m.state = stateDetail
-					m.viewport.GotoTop()
-					m.envViewport.GotoTop()
-					return m, m.fetchPortOwnerDetail(pid, m.selectedPortNumber())
-				}
+			if opened, openCmd, ok := m.openPortOwner(); ok {
+				return opened, openCmd
 			}
 		}
 		return m, cmd
@@ -1157,16 +1148,8 @@ func (m MainModel) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.portTable.Blur()
 				m.portDetailTable.Focus()
 			case focusSide:
-				selected := m.portDetailTable.SelectedRow()
-				if len(selected) > 0 {
-					pid := 0
-					fmt.Sscanf(selected[0], "%d", &pid)
-					if pid > 0 {
-						m.state = stateDetail
-						m.viewport.GotoTop()
-						m.envViewport.GotoTop()
-						return m, m.fetchPortOwnerDetail(pid, m.selectedPortNumber())
-					}
+				if opened, openCmd, ok := m.openPortOwner(); ok {
+					return opened, openCmd
 				}
 			}
 		}
@@ -1328,7 +1311,7 @@ func (m MainModel) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingAction = pending
 			if pending == actionRenice {
 				m.reniceInput.Focus()
-				return m, textinput.Blink
+				return m, nil
 			}
 		}
 		return m, nil
@@ -1429,7 +1412,7 @@ func (m MainModel) handleListFilterInput(msg tea.KeyMsg) (MainModel, tea.Cmd, bo
 
 		if msg.String() == "/" {
 			m.lockInput.Focus()
-			return m, textinput.Blink, true
+			return m, nil, true
 		}
 	} else if m.activeTab == tabContainers {
 		if m.containerInput.Focused() {
@@ -1450,7 +1433,7 @@ func (m MainModel) handleListFilterInput(msg tea.KeyMsg) (MainModel, tea.Cmd, bo
 
 		if msg.String() == "/" {
 			m.containerInput.Focus()
-			return m, textinput.Blink, true
+			return m, nil, true
 		}
 	} else if m.activeTab == tabPorts {
 		if m.portInput.Focused() {
@@ -1472,7 +1455,7 @@ func (m MainModel) handleListFilterInput(msg tea.KeyMsg) (MainModel, tea.Cmd, bo
 
 		if msg.String() == "/" {
 			m.portInput.Focus()
-			return m, textinput.Blink, true
+			return m, nil, true
 		}
 	} else {
 		if m.input.Focused() {
@@ -1510,7 +1493,7 @@ func (m MainModel) handleListFilterInput(msg tea.KeyMsg) (MainModel, tea.Cmd, bo
 
 		if msg.String() == "/" {
 			m.input.Focus()
-			return m, textinput.Blink, true
+			return m, nil, true
 		}
 	}
 	return m, nil, false

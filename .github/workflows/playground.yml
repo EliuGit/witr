@@ -3,7 +3,9 @@ name: Playground
 # Fidelity guard for the interactive playground (docs/). The in-browser JS
 # engine must reproduce witr's real output byte-for-byte; golden fixtures were
 # generated from witr's own output package (docs/fixtures/gen). This replays the
-# engine against them on every change.
+# engine against them on every change, then regenerates them from the current
+# Go renderers and replays it again, so an output change that isn't mirrored in
+# docs/js/engine.js fails here.
 #
 # Deployment is handled by GitHub Pages directly (Settings → Pages → Deploy from
 # a branch → main /docs), so there is no deploy job here.
@@ -11,9 +13,9 @@ name: Playground
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/playground.yml']
+    paths: ['docs/**', 'internal/output/**', 'pkg/model/**', '.github/workflows/playground.yml']
   pull_request:
-    paths: ['docs/**', '.github/workflows/playground.yml']
+    paths: ['docs/**', 'internal/output/**', 'pkg/model/**', '.github/workflows/playground.yml']
   workflow_dispatch:
 
 permissions:
@@ -29,3 +31,10 @@ jobs:
           node-version: '20'
       - name: Check the engine against witr's golden fixtures
         run: node docs/scripts/check-fixtures.mjs
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - name: Check the engine against fixtures regenerated from the Go renderers
+        run: |
+          go run -tags fixtures ./docs/fixtures/gen
+          node docs/scripts/check-fixtures.mjs

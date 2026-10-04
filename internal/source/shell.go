@@ -1,9 +1,12 @@
 package source
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
@@ -134,16 +137,13 @@ func enrichMultiplexer(src *model.Source, ancestry []model.Process) {
 
 		switch multiplexer(base) {
 		case "tmux":
-			session := findEnvVar(ancestry, "TMUX")
 			desc := "tmux session"
-			if session != "" {
-				// TMUX env var format: /tmp/tmux-1000/default,12345,0
-				// The session name is between the last "/" and the first ","
-				if parts := strings.Split(session, ","); len(parts) >= 1 {
-					path := parts[0]
-					if idx := strings.LastIndex(path, "/"); idx >= 0 {
-						desc = fmt.Sprintf("tmux session '%s'", path[idx+1:])
-					}
+			// TMUX holds the server's socket, its pid and the session id
+			// ("/tmp/tmux-1000/default,12345,3"), not the session's name.
+			parts := strings.Split(findEnvVar(ancestry, "TMUX"), ",")
+			if len(parts) == 3 && parts[0] != "" && parts[2] != "" {
+				if name := tmuxSessionName(parts[0], parts[2]); name != "" {
+					desc = fmt.Sprintf("tmux session '%s'", name)
 				}
 			}
 			src.Description = desc
@@ -158,6 +158,18 @@ func enrichMultiplexer(src *model.Source, ancestry []model.Process) {
 			return
 		}
 	}
+}
+
+// tmuxSessionName asks the tmux server on socket for the name of session id,
+// or returns "" when it can't.
+var tmuxSessionName = func(socket, id string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tmux", "-S", socket, "display-message", "-p", "-t", "$"+id, "#{session_name}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // findEnvVar searches the ancestry chain (target first) for an environment variable.

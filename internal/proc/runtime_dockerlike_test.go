@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -74,5 +75,39 @@ func TestApplyDockerInspect(t *testing.T) {
 	}
 	if _, ok := parseContainerInspect([]byte("not json")); ok {
 		t.Error("an unreadable document parsed")
+	}
+}
+
+// A command may contain "|" (sh -c 'a | b'); the fields after it must not
+// shift, or the state, ports and Compose labels come out wrong.
+func TestParseDockerLikeList(t *testing.T) {
+	line := func(fields ...string) string { return strings.Join(fields, listFieldSep) }
+	out := line("5d9581a8eafb", "web-1", "nginx:stable-alpine", `"/docker-entrypoint.sh sh -c 'nginx -g \"daemon off;\" | cat'"`,
+		"running", "Up 4 minutes (healthy)", "2026-10-04 13:54:18 +0000 UTC", "app_default", "/data", "0.0.0.0:18095->80/tcp, [::]:18095->80/tcp",
+		"com.docker.compose.project=app,com.docker.compose.service=web,com.docker.compose.project.config_files=/srv/app/compose.yml,com.docker.compose.project.working_dir=/srv/app,note=a|b") +
+		"\n\n" + line("abc", "short line") + "\n" +
+		line("61c2dcb0795f", "witr-pd-slirp", "docker.io/library/nginx:latest", "nginx -g daemon off;", "running", "Up 2 minutes", "2026-10-04 13:34:30.1 +0000 UTC", "", "", "0.0.0.0:18200->80/tcp", "")
+
+	got := parseDockerLikeList(out, "docker")
+	if len(got) != 2 {
+		t.Fatalf("parsed %d containers, want 2 (the short line skipped)", len(got))
+	}
+	want := model.ContainerMatch{
+		Runtime: "docker", ID: "5d9581a8eafb", Name: "web-1", Image: "nginx:stable-alpine",
+		Command: `/docker-entrypoint.sh sh -c 'nginx -g "daemon off;" | cat'`,
+		State:   "running", Status: "Up 4 minutes (healthy)", Health: "healthy",
+		CreatedAt: got[0].CreatedAt, Networks: "app_default", Mounts: "/data",
+		Ports:          "0.0.0.0:18095->80/tcp, [::]:18095->80/tcp",
+		ComposeProject: "app", ComposeService: "web",
+		ComposeConfigFile: "/srv/app/compose.yml", ComposeWorkingDir: "/srv/app",
+	}
+	if *got[0] != want {
+		t.Errorf("container with | in its command:\n got %+v\nwant %+v", *got[0], want)
+	}
+	if got[0].CreatedAt.IsZero() {
+		t.Error("CreatedAt not parsed")
+	}
+	if m := got[1]; m.Name != "witr-pd-slirp" || m.Ports != "0.0.0.0:18200->80/tcp" || m.Health != "" || m.ComposeProject != "" {
+		t.Errorf("second container = %+v", *m)
 	}
 }

@@ -104,12 +104,9 @@ func TestUpdateTogglesShowAllPorts(t *testing.T) {
 }
 
 func TestUpdateSlashFocusesFilter(t *testing.T) {
-	m, cmd := step(t, InitialModel("test"), keyRunes("/"))
+	m, _ := step(t, InitialModel("test"), keyRunes("/"))
 	if !m.input.Focused() {
 		t.Error("'/' should focus the process filter input")
-	}
-	if cmd == nil {
-		t.Error("'/' should return the cursor-blink command")
 	}
 
 	// Typing into the focused filter narrows the list.
@@ -509,4 +506,57 @@ func TestWithTargetsSeedsInitialState(t *testing.T) {
 			t.Errorf("unexpected seeded state: tab=%v pid=%d filter=%q", m.activeTab, m.initialPID, m.input.Value())
 		}
 	})
+}
+
+// Enter on a port's owner row opens it: a visible process by its PID (read
+// from the right-justified cell), and an owner that isn't visible ("-") through
+// the container publishing the port, as --port does.
+func TestPortsTabOpensOwner(t *testing.T) {
+	orig := resolvePublishingContainer
+	defer func() { resolvePublishingContainer = orig }()
+	var asked []any
+	resolvePublishingContainer = func(port int, proto string) *model.ContainerMatch {
+		asked = append(asked, port, proto)
+		return nil
+	}
+
+	setup := func(owner int) MainModel {
+		m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+		m.activeTab = tabPorts
+		m.processes = []model.Process{{PID: 4321, Command: "nginx", User: "root"}}
+		m.ports = []model.OpenPort{{Port: 18090, Protocol: "TCP6", Address: "::", State: "LISTEN", PID: owner}}
+		m.updatePortTable()
+		m.updatePortDetails()
+		m.listFocus = focusSide
+		return m
+	}
+
+	m := setup(4321)
+	if row := m.portDetailTable.SelectedRow(); len(row) == 0 || row[0] != "    4321" {
+		t.Fatalf("owner row = %q, want the right-justified PID", row)
+	}
+	m, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.state != stateDetail || cmd == nil {
+		t.Errorf("Enter on a visible owner: state %v, cmd %v; want the detail view loading", m.state, cmd)
+	}
+
+	m = setup(0)
+	if row := m.portDetailTable.SelectedRow(); len(row) == 0 || strings.TrimSpace(row[0]) != "-" {
+		t.Fatalf("owner row = %q, want the not-visible row", row)
+	}
+	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.state != stateDetail || cmd == nil {
+		t.Fatalf("Enter on a hidden owner: state %v, cmd %v; want the container lookup", m.state, cmd)
+	}
+	msg := cmd()
+	if len(asked) != 2 || asked[0] != 18090 || asked[1] != "tcp" {
+		t.Errorf("container lookup asked %v, want port 18090 over tcp", asked)
+	}
+	if err, ok := msg.(error); !ok || !strings.Contains(err.Error(), "port 18090") {
+		t.Errorf("no publishing container: msg %v, want an error naming the port", msg)
+	}
+	m, _ = step(t, m, msg)
+	if m.state != stateList || !strings.Contains(m.statusMsg, "isn't visible") {
+		t.Errorf("after the lookup: state %v, status %q", m.state, m.statusMsg)
+	}
 }

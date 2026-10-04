@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
@@ -261,6 +262,91 @@ func TestIntegrityAndSecurityLabel(t *testing.T) {
 	for _, want := range []string{"User        : apache (elevated)", "Security    : SELinux system_u:system_r:httpd_t:s0"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("report missing %q:\n%s", want, b.String())
+		}
+	}
+}
+
+// renderPlain renders the standard report without color.
+func renderPlain(r model.Result) string {
+	var buf bytes.Buffer
+	RenderStandard(&buf, r, false, false)
+	return buf.String()
+}
+
+// A start time witr couldn't read (a protected Windows service, say) shows as
+// plain "unknown", not "unknown ()".
+func TestRenderStandardStarted(t *testing.T) {
+	t.Parallel()
+
+	unknown := renderPlain(model.Result{Ancestry: []model.Process{{PID: 7, Command: "svchost.exe"}}})
+	if !strings.Contains(unknown, "Started     : unknown\n") {
+		t.Errorf("unknown start time:\n%s", unknown)
+	}
+	known := renderPlain(model.Result{Ancestry: []model.Process{{PID: 7, Command: "nginx", StartedAt: time.Now().Add(-3 * time.Hour)}}})
+	if !strings.Contains(known, "Started     : 3 hours ago (") {
+		t.Errorf("known start time:\n%s", known)
+	}
+}
+
+// The Process line carries the health and fork tags; the source's file gets
+// the label its manager uses.
+func TestRenderStandardTagsAndSourceFile(t *testing.T) {
+	t.Parallel()
+
+	got := renderPlain(model.Result{Ancestry: []model.Process{{PID: 5, Command: "worker", Health: "zombie", Forked: "forked"}}})
+	if !strings.Contains(got, "Process     : worker (pid 5) [zombie] {forked}\n") {
+		t.Errorf("health and fork tags:\n%s", got)
+	}
+	got = renderPlain(model.Result{Ancestry: []model.Process{{PID: 5, Command: "worker", Health: "healthy", Forked: "not-forked"}}})
+	if !strings.Contains(got, "Process     : worker (pid 5)\n") {
+		t.Errorf("a healthy, unforked process has no tags:\n%s", got)
+	}
+
+	tests := []struct {
+		typ  model.SourceType
+		want string
+	}{
+		{model.SourceSystemd, "Unit File   : /etc/x\n"},
+		{model.SourceLaunchd, "Plist File  : /etc/x\n"},
+		{model.SourceWindowsService, "Registry Key : /etc/x\n"},
+		{model.SourceBsdRc, "Rc Script   : /etc/x\n"},
+	}
+	for _, tt := range tests {
+		r := model.Result{
+			Ancestry: []model.Process{{PID: 5, Command: "worker"}},
+			Source:   model.Source{Type: tt.typ, Name: "worker", UnitFile: "/etc/x"},
+		}
+		if got := renderPlain(r); !strings.Contains(got, tt.want) {
+			t.Errorf("%s source file line: want %q in\n%s", tt.typ, tt.want, got)
+		}
+	}
+
+	r := model.Result{
+		Ancestry: []model.Process{{PID: 5, Command: "worker"}},
+		Source:   model.Source{Type: model.SourceSystemd, Name: "worker", UnitFile: "/etc/\x1b[31mx"},
+	}
+	if got := renderPlain(r); strings.Contains(got, "\x1b") {
+		t.Errorf("unit file path not sanitized:\n%q", got)
+	}
+}
+
+func TestContainerStateTag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state, health, want string
+	}{
+		{"running", "", ""},
+		{"running", "healthy", "healthy"},
+		{"running", "unhealthy", "unhealthy"},
+		{"running", "starting", "starting"},
+		{"exited", "", "exited"},
+		{"Restarting", "", "restarting"},
+		{"exited", "unhealthy", "unhealthy"},
+	}
+	for _, tt := range tests {
+		if got := containerStateTag(&model.ContainerMatch{State: tt.state, Health: tt.health}); got != tt.want {
+			t.Errorf("containerStateTag(%q, %q) = %q, want %q", tt.state, tt.health, got, tt.want)
 		}
 	}
 }

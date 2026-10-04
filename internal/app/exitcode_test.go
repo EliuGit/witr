@@ -89,7 +89,8 @@ func TestExitCodes(t *testing.T) {
 		{"invalid port (out of range)", []string{"--port", "70000"}, ExitInvalidInput},
 		{"unknown flag", []string{"--no-such-flag"}, ExitInvalidInput},
 		{"flag missing its value", []string{"--pid"}, ExitInvalidInput},
-		{"no target without a terminal", []string{"--json"}, ExitInvalidInput},
+		{"no target without a terminal", []string{"--no-color"}, ExitInvalidInput},
+		{"output mode without a target", []string{"--json"}, ExitInvalidInput},
 		{"interactive without a terminal", []string{"-i", "--pid", "1"}, ExitInvalidInput},
 		{"not found (ghost pid)", []string{"--pid", ghostPID}, ExitNotFound},
 		{"not found with --env", []string{"--pid", ghostPID, "--env"}, ExitNotFound},
@@ -111,5 +112,38 @@ func TestExitCodes(t *testing.T) {
 				t.Errorf("witr %v exit = %d, want %d", tc.args, got, tc.want)
 			}
 		})
+	}
+}
+
+// An output mode with nothing to explain is a usage error, in a terminal or
+// not; only a bare `witr` (or one with display modifiers) opens the TUI.
+func TestOutputModeNeedsATarget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the witr binary; skipped under -short")
+	}
+	bin := buildWitr(t)
+
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--short"}, "must specify"},
+		{[]string{"--tree"}, "must specify"},
+		{[]string{"--json"}, "must specify"},
+		{[]string{"--warnings"}, "must specify"},
+		{[]string{"--verbose"}, "must specify"},
+		{[]string{"--env"}, "must specify"},
+		{[]string{}, "interactive mode needs a terminal"},
+		{[]string{"--no-color"}, "interactive mode needs a terminal"},
+	}
+	for _, tc := range tests {
+		out, err := exec.Command(bin, tc.args...).CombinedOutput()
+		ee, ok := err.(*exec.ExitError)
+		if !ok || ee.ExitCode() != ExitInvalidInput {
+			t.Errorf("witr %v: exit = %v, want %d", tc.args, err, ExitInvalidInput)
+		}
+		if !strings.Contains(string(out), tc.want) {
+			t.Errorf("witr %v: output %q, want it to mention %q", tc.args, out, tc.want)
+		}
 	}
 }

@@ -18,7 +18,7 @@ Check that it's installed with `witr --version`. If it isn't, tell the user and 
 - Windows: `winget install -e --id PranshuParmar.witr`
 - With Go: `go install github.com/pranshuparmar/witr/cmd/witr@latest`
 
-Always give a target and `--json`. With no target, witr opens an interactive dashboard; without a terminal it exits with code 4 instead.
+Always give a target and `--json`. Without a target, `--json` exits with code 4 and asks for one; a bare `witr` opens an interactive dashboard, or exits with code 4 when there's no terminal.
 
 ## Pick the command
 

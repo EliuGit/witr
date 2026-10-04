@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/pranshuparmar/witr/internal/output"
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
@@ -91,5 +93,39 @@ func TestRenderResultDispatch(t *testing.T) {
 		if b.Len() == 0 {
 			t.Errorf("%s mode produced no output", name)
 		}
+	}
+}
+
+// A container reached through a port renders in every mode; a note, when given,
+// names the host processes publishing it.
+func TestRenderContainerMatch(t *testing.T) {
+	t.Parallel()
+	match := &model.ContainerMatch{Runtime: "docker", ID: "5d9581a8eafb0000", Name: "web", Image: "nginx:stable-alpine", State: "running", Ports: "0.0.0.0:8080->80/tcp"}
+	tgt := model.Target{Type: model.TargetPort, Value: "8080"}
+	note := "Published on the host by docker-proxy (pid 42); the container's own processes are not visible from here."
+	render := func(flags appFlags, note string) (int, string) {
+		var buf bytes.Buffer
+		var jr []string
+		code := renderContainerMatch(&buf, output.NewPrinter(&buf), tgt, "port 8080", match, flags, false, &jr, note)
+		return code, buf.String()
+	}
+
+	for _, f := range []appFlags{{}, {verbose: true}, {short: true}, {tree: true}, {warn: true}, {json: true}} {
+		if code, out := render(f, note); code != ExitOK || !strings.Contains(out, "web") {
+			t.Errorf("%+v: exit %d, output %q", f, code, out)
+		}
+	}
+	if _, out := render(appFlags{}, note); !strings.Contains(out, "Container   : web") || !strings.Contains(out, "Note        : "+note) {
+		t.Errorf("with a note:\n%s", out)
+	}
+	if _, out := render(appFlags{}, ""); strings.Contains(out, "docker-proxy") || !strings.Contains(out, "Container   : web") {
+		t.Errorf("without a note:\n%s", out)
+	}
+	var d struct{ ContainerName, Note string }
+	if _, out := render(appFlags{json: true}, note); json.Unmarshal([]byte(out), &d) != nil || d.ContainerName != "web" || d.Note != note {
+		t.Errorf("json with a note: %s", out)
+	}
+	if _, out := render(appFlags{json: true}, ""); json.Unmarshal([]byte(out), &d) != nil || !strings.Contains(d.Note, "not visible") {
+		t.Errorf("json without a note: %s", out)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func TestCalendarSpec(t *testing.T) {
@@ -102,5 +104,34 @@ func TestGetUnitNameFromCgroupSelf(t *testing.T) {
 	// PID 0 has no cgroup file, so the read fails and we get "".
 	if got := getUnitNameFromCgroup(0); got != "" {
 		t.Errorf("getUnitNameFromCgroup(0) = %q, want empty", got)
+	}
+}
+
+func TestApplyUnitProperties(t *testing.T) {
+	tests := []struct {
+		name               string
+		unit               map[string]interface{}
+		wantDesc, wantFile string
+	}{
+		{"description and unit file", map[string]interface{}{"Description": "A high performance web server", "FragmentPath": "/lib/systemd/system/nginx.service", "SourcePath": "/etc/init.d/nginx"}, "A high performance web server", "/lib/systemd/system/nginx.service"},
+		{"generated from an init script", map[string]interface{}{"Description": "LSB: web server", "SourcePath": "/etc/init.d/nginx"}, "LSB: web server", "/etc/init.d/nginx"},
+		{"no description of its own", map[string]interface{}{"Description": "nginx.service"}, "", ""},
+		{"unexpected types", map[string]interface{}{"Description": 7, "FragmentPath": []byte("x")}, "", ""},
+	}
+	for _, tt := range tests {
+		src := &model.Source{}
+		applyUnitProperties(src, "nginx.service", tt.unit)
+		if src.Description != tt.wantDesc || src.UnitFile != tt.wantFile {
+			t.Errorf("%s: description %q, unit file %q; want %q, %q", tt.name, src.Description, src.UnitFile, tt.wantDesc, tt.wantFile)
+		}
+	}
+}
+
+func TestRestartCount(t *testing.T) {
+	if got := restartCount(map[string]interface{}{"NRestarts": uint32(7)}); got != "7" {
+		t.Errorf("restartCount = %q, want 7", got)
+	}
+	if got := restartCount(map[string]interface{}{}); got != "0" {
+		t.Errorf("restartCount without the property = %q, want 0", got)
 	}
 }

@@ -8,6 +8,21 @@ import (
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
+// isSSHDaemon reports whether command names the SSH server: its listener, or
+// the per-connection process, whose title reads "sshd: alice@pts/3" (on
+// OpenSSH 9.8 and later, sshd-session).
+func isSSHDaemon(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSuffix(filepath.Base(fields[0]), ":")) {
+	case "sshd", "sshd.exe", "sshd-session":
+		return true
+	}
+	return false
+}
+
 func detectSSH(ancestry []model.Process) *model.Source {
 	if len(ancestry) < 2 {
 		return nil
@@ -16,8 +31,7 @@ func detectSSH(ancestry []model.Process) *model.Source {
 	// Look for sshd in the ancestry chain (excluding the target itself)
 	hasSSHD := false
 	for i := 0; i < len(ancestry)-1; i++ {
-		base := filepath.Base(ancestry[i].Command)
-		if base == "sshd" || base == "sshd.exe" || strings.HasPrefix(base, "sshd:") {
+		if isSSHDaemon(ancestry[i].Command) {
 			hasSSHD = true
 			break
 		}

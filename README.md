@@ -572,7 +572,7 @@ All target flags (`--pid`, `--port`, `--file`, `--container`) are repeatable and
 
 The `--container` flag searches across Docker, Podman, nerdctl, K8s/crictl, Incus, LXC, LXD, and FreeBSD jails, and matches against container name, image, command, and compose project/service labels, or a container ID (full, short, or a prefix of at least 4 characters).
 
-The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used. It needs a terminal: run without one (from a script, a pipe or CI) and witr exits with code 4 and asks for a target instead.
+The TUI is launched if no arguments or relevant flags (`--pid`, `--port`, `--file`, `--container`) are provided, or if the `--interactive` flag is explicitly used. It needs a terminal: run without one (from a script, a pipe or CI) and witr exits with code 4 and asks for a target instead. An output mode with no target (`witr --json`, `--short`, `--tree`, `--warnings`, `--verbose` or `--env`) also exits with code 4 and asks for a target, rather than opening the TUI.
 
 ---
 

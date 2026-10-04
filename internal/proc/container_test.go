@@ -220,3 +220,37 @@ func TestPublishesPort(t *testing.T) {
 		}
 	}
 }
+
+// Every installed runtime is listed; Docker's answer wins over Podman's, and
+// Podman's over nerdctl's.
+func TestResolveContainerByPort(t *testing.T) {
+	orig := listRuntimeContainers
+	defer func() { listRuntimeContainers = orig }()
+	lists := map[string][]*model.ContainerMatch{
+		"docker":  {{Name: "d-web", Ports: "0.0.0.0:8080->80/tcp, [::]:8080->80/tcp"}},
+		"podman":  {{Name: "p-web", Ports: "0.0.0.0:8080->80/tcp"}, {Name: "p-dns", Ports: "0.0.0.0:5353->53/udp"}},
+		"nerdctl": {{Name: "n-dns", Ports: "0.0.0.0:5353->53/udp"}, {Name: "n-range", Ports: "0.0.0.0:9000-9002->9000-9002/tcp"}},
+	}
+	listRuntimeContainers = func(bin string) []*model.ContainerMatch { return lists[bin] }
+
+	tests := []struct {
+		port        int
+		proto, want string
+	}{
+		{8080, "tcp", "d-web"},
+		{8080, "", "d-web"},
+		{5353, "udp", "p-dns"},
+		{5353, "tcp", ""},
+		{9001, "", "n-range"},
+		{7000, "", ""},
+	}
+	for _, tt := range tests {
+		got := ""
+		if m := ResolveContainerByPort(tt.port, tt.proto); m != nil {
+			got = m.Name
+		}
+		if got != tt.want {
+			t.Errorf("ResolveContainerByPort(%d, %q) = %q, want %q", tt.port, tt.proto, got, tt.want)
+		}
+	}
+}

@@ -56,20 +56,29 @@ func dockerLikeList(bin, runtime string, filters ...string) []*model.ContainerMa
 		"{{.Mounts}}",
 		"{{.Ports}}",
 		"{{.Labels}}",
-	}, "|")
+	}, listFieldSep)
 	args := append([]string{"ps", "--no-trunc", "--format", format}, filters...)
 	out, err := runtimeCommand(ctx, bin, args...).Output()
 	if err != nil {
 		return nil
 	}
+	return parseDockerLikeList(string(out), runtime)
+}
 
+// listFieldSep separates the fields of a `ps --format` line. A command can hold
+// any printable character ("sh -c 'a | b'"), so the separator is the ASCII unit
+// separator, which no field contains.
+const listFieldSep = "\x1f"
+
+// parseDockerLikeList parses the `ps --format` output of dockerLikeList.
+func parseDockerLikeList(out, runtime string) []*model.ContainerMatch {
 	var matches []*model.ContainerMatch
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 11)
+		parts := strings.SplitN(line, listFieldSep, 11)
 		if len(parts) < 11 {
 			continue
 		}
@@ -79,7 +88,7 @@ func dockerLikeList(bin, runtime string, filters ...string) []*model.ContainerMa
 			ID:                parts[0],
 			Name:              parts[1],
 			Image:             parts[2],
-			Command:           strings.Trim(parts[3], "\""),
+			Command:           unquoteCommand(parts[3]),
 			State:             parts[4],
 			Status:            parts[5],
 			Health:            healthFromStatus(parts[5]),
@@ -94,6 +103,15 @@ func dockerLikeList(bin, runtime string, filters ...string) []*model.ContainerMa
 		})
 	}
 	return matches
+}
+
+// unquoteCommand undoes Docker's quoting of the command (Go syntax, so inner
+// quotes come escaped); Podman and nerdctl print it bare or merely wrapped.
+func unquoteCommand(s string) string {
+	if u, err := strconv.Unquote(s); err == nil {
+		return u
+	}
+	return strings.Trim(s, "\"")
 }
 
 // parseLabelString turns "key1=val1,key2=val2" into a map. Values with embedded

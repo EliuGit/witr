@@ -50,6 +50,14 @@ func isPortForwarder(name string) bool {
 	return portForwarders[name] || strings.HasPrefix(name, "pasta.")
 }
 
+// How a process is read and a published port's container found; variables so
+// tests can stand in for live processes and runtimes.
+var (
+	cmdlineOf       = GetCmdline
+	imageNameOf     = imageName
+	containerByPort = ResolveContainerByPort
+)
+
 // PublishedContainer returns the container behind port when every process in
 // pids only publishes container ports on the host (docker-proxy, or one of
 // portForwarders), with each process's name. It returns nil when any of them
@@ -66,19 +74,15 @@ func PublishedContainer(port int, pids []int) (*model.ContainerMatch, []string) 
 			names[i], proto = "docker-proxy", p
 			continue
 		}
-		name := imageName(pid)
+		name := imageNameOf(pid)
 		if !isPortForwarder(name) {
 			return nil, nil
 		}
 		names[i] = name
 	}
-	var match *model.ContainerMatch
-	if proto != "" {
-		match = ResolveContainerByPort(port, proto)
-	} else {
-		// Forwarders don't say which protocol they carry.
-		match = ResolveContainerByPort(port, "")
-	}
+	// Forwarders don't say which protocol they carry, so proto stays "" (either)
+	// unless a docker-proxy named it.
+	match := containerByPort(port, proto)
 	if match == nil {
 		return nil, nil
 	}
@@ -88,7 +92,7 @@ func PublishedContainer(port int, pids []int) (*model.ContainerMatch, []string) 
 // DockerProxyProto reports whether pid is a docker-proxy publishing port, and
 // over which protocol.
 func DockerProxyProto(pid, port int) (string, bool) {
-	cmdline := GetCmdline(pid)
+	cmdline := cmdlineOf(pid)
 	fields := strings.Fields(cmdline)
 	if len(fields) == 0 || filepath.Base(fields[0]) != "docker-proxy" {
 		return "", false

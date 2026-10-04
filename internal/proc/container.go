@@ -21,13 +21,10 @@ func ResolveContainerByPort(port int, proto string) *model.ContainerMatch {
 	found := make([]*model.ContainerMatch, len(bins))
 	var wg sync.WaitGroup
 	for i, bin := range bins {
-		if !binAvailable(bin) {
-			continue
-		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for _, m := range dockerLikeList(bin, dockerLikeRuntimeLabels[bin]) {
+			for _, m := range listRuntimeContainers(bin) {
 				if publishesPort(m.Ports, port, proto) {
 					found[i] = m
 					return
@@ -42,6 +39,15 @@ func ResolveContainerByPort(port int, proto string) *model.ContainerMatch {
 		}
 	}
 	return nil
+}
+
+// listRuntimeContainers lists the running containers of a docker-compatible
+// runtime, or nothing when it isn't installed. A variable for tests.
+var listRuntimeContainers = func(bin string) []*model.ContainerMatch {
+	if !binAvailable(bin) {
+		return nil
+	}
+	return dockerLikeList(bin, dockerLikeRuntimeLabels[bin])
 }
 
 // publishesPort reports whether a container's published ports, as `ps` lists

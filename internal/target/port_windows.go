@@ -13,7 +13,14 @@ func ResolvePort(port int) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	return portOwnerPIDs(socks, port)
+}
 
+// portOwnerPIDs picks the processes behind port from the socket tables: those
+// listening on it (TCP) or bound to it (UDP), else those with a connection on
+// it at either end. A listener without an owner (PID 0) means the owner isn't
+// visible.
+func portOwnerPIDs(socks []procpkg.WinSocket, port int) ([]int, error) {
 	var pids, fallbackPIDs []int
 	seen := make(map[int]bool)
 	fallbackSeen := make(map[int]bool)

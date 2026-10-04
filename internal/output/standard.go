@@ -188,11 +188,14 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 			out.Printf("Command     : %s\n", proc.Command)
 		}
 	}
-	rel, dtStr := FormatStartedAt(proc.StartedAt)
+	started, dtStr := FormatStartedAt(proc.StartedAt)
+	if dtStr != "" {
+		started += " (" + dtStr + ")"
+	}
 	if colorEnabled {
-		out.Printf("%sStarted%s     : %s (%s)\n", ColorMagenta, ColorReset, rel, dtStr)
+		out.Printf("%sStarted%s     : %s\n", ColorMagenta, ColorReset, started)
 	} else {
-		out.Printf("Started     : %s (%s)\n", rel, dtStr)
+		out.Printf("Started     : %s\n", started)
 	}
 
 	// Restarts by the managing system (systemd's NRestarts, or the container
@@ -296,10 +299,11 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 			pad = " "
 		}
 
+		unitFile := SanitizeTerminal(r.Source.UnitFile)
 		if colorEnabled {
-			out.Printf("%s%s%s%s: %s\n", ColorCyan, label, ColorReset, pad, r.Source.UnitFile)
+			out.Printf("%s%s%s%s: %s\n", ColorCyan, label, ColorReset, pad, unitFile)
 		} else {
-			out.Printf("%s%s: %s\n", label, pad, r.Source.UnitFile)
+			out.Printf("%s%s: %s\n", label, pad, unitFile)
 		}
 	}
 

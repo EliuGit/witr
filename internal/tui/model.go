@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -152,7 +151,7 @@ const (
 type MainModel struct {
 	state              modelState
 	table              table.Model
-	input              textinput.Model
+	input              textInput
 	viewport           viewport.Model
 	treeViewport       viewport.Model
 	envViewport        viewport.Model
@@ -164,15 +163,15 @@ type MainModel struct {
 	activeTab          tab
 	portTable          table.Model
 	portDetailTable    table.Model
-	portInput          textinput.Model
+	portInput          textInput
 	ports              []model.OpenPort
 	containerTable     table.Model
-	containerInput     textinput.Model
+	containerInput     textInput
 	containers         []*model.ContainerMatch
 	filteredContainers []*model.ContainerMatch
 	selectedContainer  *model.ContainerMatch
 	lockTable          table.Model
-	lockInput          textinput.Model
+	lockInput          textInput
 	locks              []*model.LockedFile
 	filteredLocks      []*model.LockedFile
 	statusMsg          string // transient status/error message shown in status line
@@ -225,7 +224,7 @@ type MainModel struct {
 	actionMenuOpen bool
 	pendingAction  actionKind
 	actionTarget   *model.Process
-	reniceInput    textinput.Model
+	reniceInput    textInput
 
 	// PID to select once the first process list arrives
 	initialPID int
@@ -313,41 +312,10 @@ func InitialModel(version string) MainModel {
 	)
 	lt.SetStyles(s)
 
-	li := textinput.New()
-	li.Placeholder = "Search PID, Process, Type, Mode, Path..."
-	li.CharLimit = 156
-	li.Width = 50
-	li.Prompt = "> "
-	li.PromptStyle = promptStyle
-	li.PlaceholderStyle = placeholderStyle
-	li.Blur()
-
-	ci := textinput.New()
-	ci.Placeholder = "Search ID, Name, Runtime, Image, Status, Ports, Command..."
-	ci.CharLimit = 156
-	ci.Width = 50
-	ci.Prompt = "> "
-	ci.PromptStyle = promptStyle
-	ci.PlaceholderStyle = placeholderStyle
-	ci.Blur()
-
-	ti := textinput.New()
-	ti.Placeholder = "Search PID, Name, User, Command..."
-	ti.CharLimit = 156
-	ti.Width = 50
-	ti.Prompt = "> "
-	ti.PromptStyle = promptStyle
-	ti.PlaceholderStyle = placeholderStyle
-	ti.Blur()
-
-	pi := textinput.New()
-	pi.Placeholder = "Search Port, Protocol, Address, State..."
-	pi.CharLimit = 156
-	pi.Width = 50
-	pi.Prompt = "> "
-	pi.PromptStyle = promptStyle
-	pi.PlaceholderStyle = placeholderStyle
-	pi.Blur()
+	li := newTextInput("Search PID, Process, Type, Mode, Path...", 156, 50)
+	ci := newTextInput("Search ID, Name, Runtime, Image, Status, Ports, Command...", 156, 50)
+	ti := newTextInput("Search PID, Name, User, Command...", 156, 50)
+	pi := newTextInput("Search Port, Protocol, Address, State...", 156, 50)
 
 	vp := viewport.New(0, 0)
 	vp.YPosition = 0
@@ -358,11 +326,9 @@ func InitialModel(version string) MainModel {
 	evp := viewport.New(0, 0)
 	evp.YPosition = 0
 
-	ri := textinput.New()
-	ri.Placeholder = "−20…19"
-	ri.CharLimit = 4
-	ri.Width = 8
-	ri.Blur()
+	// The renice prompt follows the confirmation text, so its "> " is plain.
+	ri := newTextInput("−20…19", 4, 8)
+	ri.PromptStyle = lipgloss.NewStyle()
 
 	return MainModel{
 		state:             stateList,
@@ -457,7 +423,6 @@ func (m MainModel) withTargets(targets []model.Target, exact bool) MainModel {
 
 func (m MainModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		textinput.Blink,
 		m.refreshProcesses(),
 		waitTick(),
 		tea.EnableMouseCellMotion,

@@ -143,6 +143,56 @@ func (m MainModel) fetchPortOwnerDetail(pid, port int) tea.Cmd {
 	}
 }
 
+// resolvePublishingContainer finds the container publishing a host port.
+var resolvePublishingContainer = proc.ResolveContainerByPort
+
+// fetchPublishingContainer opens the container publishing a port whose owning
+// process isn't visible (Docker Desktop holds published ports out of sight),
+// as --port does.
+func (m MainModel) fetchPublishingContainer(port int, proto string) tea.Cmd {
+	return func() tea.Msg {
+		if match := resolvePublishingContainer(port, proto); match != nil {
+			return m.fetchContainerDetail(match)()
+		}
+		return fmt.Errorf("port %d: the process holding it isn't visible to this user", port)
+	}
+}
+
+// openPortOwner opens the selected owner row of the selected port. The row of
+// an owner that isn't visible ("-") opens the container publishing the port,
+// if any. ok is false when the row has nothing to open.
+func (m MainModel) openPortOwner() (MainModel, tea.Cmd, bool) {
+	row := m.portDetailTable.SelectedRow()
+	if len(row) == 0 {
+		return m, nil, false
+	}
+	var cmd tea.Cmd
+	pid := 0
+	fmt.Sscanf(row[0], "%d", &pid)
+	port := m.selectedPortNumber()
+	switch {
+	case pid > 0:
+		cmd = m.fetchPortOwnerDetail(pid, port)
+	case strings.TrimSpace(row[0]) == "-" && port > 0:
+		cmd = m.fetchPublishingContainer(port, m.selectedPortProtocol())
+	default:
+		return m, nil, false
+	}
+	m.state = stateDetail
+	m.viewport.GotoTop()
+	m.envViewport.GotoTop()
+	return m, cmd, true
+}
+
+// selectedPortProtocol returns the protocol family of the selected Ports-tab
+// row ("tcp" or "udp"), or "".
+func (m MainModel) selectedPortProtocol() string {
+	if row := m.portTable.SelectedRow(); len(row) > 1 {
+		return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(row[1])), "6")
+	}
+	return ""
+}
+
 // selectedPortNumber returns the port of the selected Ports-tab row, or 0.
 func (m MainModel) selectedPortNumber() int {
 	port := 0

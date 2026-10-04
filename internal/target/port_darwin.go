@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	procpkg "github.com/pranshuparmar/witr/internal/proc"
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func ResolvePort(port int) ([]int, error) {
@@ -61,13 +62,18 @@ func ResolvePort(port int) ([]int, error) {
 }
 
 func resolvePortNetstat(port int) ([]int, error) {
+	return netstatPortPIDs(procpkg.NetstatSockets(), port)
+}
+
+// netstatPortPIDs picks the processes behind port from netstat's sockets:
+// listening TCP and bound UDP sockets first, connected TCP sockets only when
+// nothing listens. A listener without an owner means the owner isn't visible.
+func netstatPortPIDs(socks []model.OpenPort, port int) ([]int, error) {
 	pidSet := make(map[int]bool)
 	fallbackSet := make(map[int]bool)
 	sawListenNoOwner := false
 
-	// Listening TCP and bound UDP sockets first; connected TCP sockets only
-	// when nothing listens.
-	for _, s := range procpkg.NetstatSockets() {
+	for _, s := range socks {
 		if s.Port != port {
 			continue
 		}

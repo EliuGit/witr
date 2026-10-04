@@ -198,7 +198,10 @@ func runApp(cmd *cobra.Command, args []string) error {
 	fileFlags, _ := cmd.Flags().GetStringSlice("file")
 	containerFlags, _ := cmd.Flags().GetStringSlice("container")
 
-	if !envFlag && len(pidFlags) == 0 && len(portFlags) == 0 && len(fileFlags) == 0 && len(containerFlags) == 0 && len(args) == 0 {
+	// With no target the TUI opens, unless an output mode was asked for: that
+	// needs something to explain, and gets the "must specify" error below.
+	outputMode := envFlag || boolFlag(cmd, "short") || boolFlag(cmd, "tree") || boolFlag(cmd, "json") || boolFlag(cmd, "warnings") || boolFlag(cmd, "verbose")
+	if !outputMode && len(pidFlags) == 0 && len(portFlags) == 0 && len(fileFlags) == 0 && len(containerFlags) == 0 && len(args) == 0 {
 		return runInteractive(nil, false)
 	}
 
@@ -985,6 +988,10 @@ func analyzeContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t
 	return renderResult(outw, res, flags, multiMode, jsonResults), true
 }
 
+// containerByPort finds the container publishing a host port; a variable so
+// tests needn't run the container runtimes.
+var containerByPort = procpkg.ResolveContainerByPort
+
 // portContainer explains a port target by the container that publishes it,
 // if any: its main process when that is visible here, otherwise the
 // runtime's view of the container.
@@ -993,7 +1000,7 @@ func portContainer(cmd *cobra.Command, outw io.Writer, outp output.Printer, t mo
 	if err != nil {
 		return 0, false
 	}
-	match := procpkg.ResolveContainerByPort(port, "")
+	match := containerByPort(port, "")
 	if match == nil {
 		return 0, false
 	}
