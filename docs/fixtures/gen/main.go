@@ -34,6 +34,8 @@ import (
 type socket struct {
 	Address, Protocol, State string
 	Port                     int
+	RemoteAddress            string
+	RemotePort               int
 }
 type source struct {
 	Type, Name, Description, UnitFile string
@@ -300,7 +302,7 @@ func toModelProc(p proc, now time.Time) model.Process {
 		mp.StartedAt = now.Add(-time.Duration(p.StartedAgo) * time.Second)
 	}
 	for _, s := range p.Sockets {
-		mp.Sockets = append(mp.Sockets, model.Socket{Address: s.Address, Port: s.Port, Protocol: s.Protocol, State: s.State})
+		mp.Sockets = append(mp.Sockets, model.Socket{Address: s.Address, Port: s.Port, Protocol: s.Protocol, State: s.State, RemoteAddress: s.RemoteAddress, RemotePort: s.RemotePort})
 	}
 	if p.Memory != nil {
 		mp.Memory = model.MemoryInfo{VMS: p.Memory.VMS, RSS: p.Memory.RSS, Shared: p.Memory.Shared}

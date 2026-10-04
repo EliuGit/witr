@@ -6,4 +6,7 @@ type OpenPort struct {
 	Address  string
 	Protocol string
 	State    string
+	// The other end of a connected socket; empty for listeners.
+	RemoteAddress string
+	RemotePort    int
 }

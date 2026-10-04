@@ -5,8 +5,8 @@ Image       : redis:7-alpine
 Compose File: /srv/expense-manager/docker-compose.yml
 Compose Dir : /srv/expense-manager
 Command     : docker-entrypoint.sh redis-server --appendonly yes
-Started     : 5 days ago (Tue 2026-09-29 08:13:55 +00:00)
-Created     : Tue 2026-09-29 08:03:55 +00:00
+Started     : 5 days ago (Tue 2026-09-29 09:58:32 +00:00)
+Created     : Tue 2026-09-29 09:48:32 +00:00
 Network     : expense-manager_default
 
 Why It Exists :

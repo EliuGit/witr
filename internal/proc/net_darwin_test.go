@@ -67,8 +67,8 @@ func TestParseLsofPorts(t *testing.T) {
 	want := []model.OpenPort{
 		{PID: 512, Port: 49152, Address: "0.0.0.0", Protocol: "TCP", State: "LISTEN"},
 		{PID: 512, Port: 49152, Address: "0.0.0.0", Protocol: "TCP", State: "LISTEN"},
-		{PID: 700, Port: 51234, Address: "192.168.1.10", Protocol: "TCP", State: "ESTABLISHED"},
-		{PID: 700, Port: 51235, Address: "2001:db8::10", Protocol: "TCP", State: "ESTABLISHED"},
+		{PID: 700, Port: 51234, Address: "192.168.1.10", Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "17.57.146.20", RemotePort: 443},
+		{PID: 700, Port: 51235, Address: "2001:db8::10", Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "2001:db8::20", RemotePort: 443},
 		{PID: 300, Port: 5353, Address: "0.0.0.0", Protocol: "UDP", State: "OPEN"},
 	}
 	if got := parseLsofPorts(sampleLsof); !slices.Equal(got, want) {

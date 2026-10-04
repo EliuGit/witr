@@ -26,11 +26,13 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 
 	for _, s := range sockets {
 		openPorts = append(openPorts, model.OpenPort{
-			PID:      extractPID(s.Inode),
-			Port:     s.Port,
-			Address:  s.Address,
-			Protocol: s.Protocol,
-			State:    s.State,
+			PID:           extractPID(s.Inode),
+			Port:          s.Port,
+			Address:       s.Address,
+			Protocol:      s.Protocol,
+			State:         s.State,
+			RemoteAddress: s.RemoteAddress,
+			RemotePort:    s.RemotePort,
 		})
 	}
 
@@ -85,14 +87,20 @@ func parseSockstatOutput(output string, sockets map[string]model.Socket) {
 
 		address, port := parseSockstatAddr(localAddr, proto)
 		if port > 0 {
-			inode := pid + ":" + strconv.Itoa(port) + ":" + address
-			sockets[inode] = model.Socket{
+			// Connections accepted on one local port differ only by the
+			// remote end, so it is part of the key.
+			inode := pid + ":" + strconv.Itoa(port) + ":" + address + ":" + foreignAddr
+			s := model.Socket{
 				Inode:    inode,
 				Port:     port,
 				Address:  address,
 				Protocol: protocol,
 				State:    state,
 			}
+			if raddr, rport := parseSockstatAddr(foreignAddr, proto); rport > 0 {
+				s.RemoteAddress, s.RemotePort = raddr, rport
+			}
+			sockets[inode] = s
 		}
 	}
 }

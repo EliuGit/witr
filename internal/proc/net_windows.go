@@ -236,17 +236,21 @@ func GetSocketsForPID(pid int) []model.Socket {
 		if s.PID != pid {
 			continue
 		}
-		key := s.Protocol + "|" + s.LocalIP + "|" + strconv.Itoa(s.LocalPort) + "|" + s.State
+		key := s.Protocol + "|" + s.LocalIP + "|" + strconv.Itoa(s.LocalPort) + "|" + s.State + "|" + s.RemoteIP + "|" + strconv.Itoa(s.RemotePort)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		sockets = append(sockets, model.Socket{
+		sock := model.Socket{
 			Port:     s.LocalPort,
 			Address:  s.LocalIP,
 			Protocol: s.Protocol,
 			State:    s.State,
-		})
+		}
+		if s.RemotePort > 0 {
+			sock.RemoteAddress, sock.RemotePort = s.RemoteIP, s.RemotePort
+		}
+		sockets = append(sockets, sock)
 	}
 	return sockets
 }

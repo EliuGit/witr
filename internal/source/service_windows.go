@@ -9,13 +9,22 @@ import (
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
+// serviceDescription returns a service's display name, or "" when it only
+// repeats the service name (MySQL80 is displayed as "MySQL80").
+func serviceDescription(name string) string {
+	if d := procpkg.ServiceDisplayName(name); !strings.EqualFold(d, name) {
+		return d
+	}
+	return ""
+}
+
 func detectWindowsService(ancestry []model.Process) *model.Source {
 	// 1. Check for explicit service name in process metadata (prioritize target)
 	for i := len(ancestry) - 1; i >= 0; i-- {
 		p := ancestry[i]
 		if p.Service != "" {
 			registryKey := `HKLM\SYSTEM\CurrentControlSet\Services\` + p.Service
-			description := procpkg.ServiceDisplayName(p.Service)
+			description := serviceDescription(p.Service)
 
 			return &model.Source{
 				Type:        model.SourceWindowsService,
@@ -51,7 +60,7 @@ func detectWindowsService(ancestry []model.Process) *model.Source {
 			name := strings.TrimSuffix(target.Command, ".exe")
 
 			registryKey := `HKLM\SYSTEM\CurrentControlSet\Services\` + name
-			description := procpkg.ServiceDisplayName(name)
+			description := serviceDescription(name)
 
 			return &model.Source{
 				Type:        model.SourceWindowsService,

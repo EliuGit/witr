@@ -52,7 +52,12 @@
     { "pid": 14233, "cpuPercent": 2.3, "ppid": 5034, "command": "node", "cmdline": "node /srv/expense-manager/index.js",
       "user": "deploy", "startedAgo": 172800,
       "workingDir": "/srv/expense-manager", "gitRepo": "expense-manager", "gitBranch": "main",
-      "sockets": [ { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "LISTEN" } ],
+      "sockets": [
+        { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "LISTEN" },
+        { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "ESTABLISHED", "remoteAddress": "127.0.0.1", "remotePort": 49822 },
+        { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "ESTABLISHED", "remoteAddress": "127.0.0.1", "remotePort": 49836 },
+        { "address": "127.0.0.1", "port": 51744, "protocol": "TCP", "state": "ESTABLISHED", "remoteAddress": "127.0.0.1", "remotePort": 5432 }
+      ],
       "threadCount": 11, "fdCount": 34, "fdLimit": 1024,
       "memory": { "vms": 1198765568, "rss": 187650048, "shared": 41943040 },
       "io": { "readBytes": 15728640, "writeBytes": 4194304, "readOps": 2140, "writeOps": 512 },

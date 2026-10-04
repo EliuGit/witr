@@ -472,16 +472,15 @@ export class Engine {
     }
 
     // Sockets.
-    const visible = visibleSockets(proc.sockets || []);
-    sortSockets(visible);
-    visible.forEach((s, i) => {
+    const rows = socketRows(proc.sockets || []);
+    rows.forEach((s, i) => {
       if (i >= MAX_DISPLAY_ITEMS) return;
       const line = formatSocket(s);
       if (i === 0) o += color ? `${ESC.green}Sockets${ESC.reset}     : ${line}\n` : `Sockets     : ${line}\n`;
       else o += `              ${line}\n`;
     });
-    if (visible.length > MAX_DISPLAY_ITEMS) {
-      o += `              ... and ${visible.length - MAX_DISPLAY_ITEMS} more\n`;
+    if (rows.length > MAX_DISPLAY_ITEMS) {
+      o += `              ... and ${rows.length - MAX_DISPLAY_ITEMS} more\n`;
     }
 
     // Warnings.
@@ -1015,12 +1014,50 @@ function visibleSockets(sockets) {
   return sockets.filter((s) => s.address !== '' && s.port > 0).map((s) => ({ ...s }));
 }
 
+// sortSockets mirrors output.sortSockets: listeners first, then connected
+// sockets, then the rest; addresses grouped, ports ascending, remote ends last.
 function sortSockets(sockets) {
   sockets.sort((a, b) => {
+    const ra = socketSortRank(a.state);
+    const rb = socketSortRank(b.state);
+    if (ra !== rb) return ra - rb;
     if (a.address !== b.address) return a.address < b.address ? -1 : 1;
     if (a.port !== b.port) return a.port - b.port;
-    return socketSortRank(a.state) - socketSortRank(b.state);
+    const aa = a.remoteAddress || '';
+    const ba = b.remoteAddress || '';
+    if (aa !== ba) return aa < ba ? -1 : 1;
+    return (a.remotePort || 0) - (b.remotePort || 0);
   });
+}
+
+// socketRows mirrors output.socketRows: established connections on a port the
+// process listens on fold into that listener's count.
+function socketRows(sockets) {
+  const visible = visibleSockets(sockets);
+  sortSockets(visible);
+  const family = (s) => (s.protocol || '').replace(/6$/, '');
+  const endpoint = (s, addr, port) => `${family(s)}|${joinHostPort(addr, port)}`;
+  const own = new Set(visible.filter((s) => s.state === 'ESTABLISHED').map((s) => endpoint(s, s.address, s.port)));
+  const shown = new Set();
+  const listener = new Map();
+  const key = (s) => `${family(s)}|${s.port}`;
+  const rows = [];
+  for (const s of visible) {
+    if (s.state === 'ESTABLISHED' && s.remotePort > 0 && own.has(endpoint(s, s.remoteAddress, s.remotePort))) {
+      if (!shown.has(endpoint(s, s.address, s.port))) {
+        shown.add(endpoint(s, s.remoteAddress, s.remotePort));
+        rows.push({ ...s, accepted: 0, internal: true });
+      }
+      continue;
+    }
+    if (s.state === 'ESTABLISHED' && listener.has(key(s))) {
+      rows[listener.get(key(s))].accepted++;
+      continue;
+    }
+    if (s.state === 'LISTEN' && !listener.has(key(s))) listener.set(key(s), rows.length);
+    rows.push({ ...s, accepted: 0 });
+  }
+  return rows;
 }
 
 function joinHostPort(addr, port) {
@@ -1029,10 +1066,15 @@ function joinHostPort(addr, port) {
   return `${addr}:${port}`;
 }
 
-function formatSocket(s) {
-  const hostPort = joinHostPort(s.address, s.port);
-  const proto = s.protocol || '?';
-  return `${hostPort} (${proto} | ${displayState(s.state)})`;
+function formatSocket(r) {
+  let hostPort = joinHostPort(r.address, r.port);
+  if (r.remoteAddress && r.remotePort > 0) hostPort += `${r.internal ? ' ↔ ' : ' → '}${joinHostPort(r.remoteAddress, r.remotePort)}`;
+  const proto = r.protocol || '?';
+  let state = displayState(r.state);
+  if (r.internal) state += ', within the process';
+  else if (r.accepted === 1) state += ', 1 connection';
+  else if (r.accepted > 1) state += `, ${r.accepted} connections`;
+  return `${hostPort} (${proto} | ${state})`;
 }
 
 // ---- bytes (standard.go) ---------------------------------------------

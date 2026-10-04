@@ -616,7 +616,8 @@ Source      : pm2
 
 Working Dir : /opt/apps/expense-manager
 Git Repo    : expense-manager (main)
-Sockets     : 127.0.0.1:5001 (TCP | LISTENING)
+Sockets     : 127.0.0.1:5001 (TCP | LISTENING, 2 connections)
+              127.0.0.1:51744 → 127.0.0.1:5432 (TCP | ESTABLISHED)
 ```
 
 ---
@@ -884,6 +885,7 @@ be traced. Run `witr --help` for all options.
 | Environment variables | ✅ | ⚠️ | ⚠️ | ✅ | macOS: SIP restrictions; Windows: protected processes inaccessible. |
 | **Network** |
 | Listening ports | ✅ | ✅ | ✅ | ✅ | |
+| Connections (remote end) | ✅ | ✅ | ✅ | ✅ | Connections show their remote end; connections a listener accepted are counted on its row. |
 | Bind addresses | ✅ | ✅ | ✅ | ✅ | |
 | Port → PID resolution | ✅ | ✅ | ✅ | ✅ | |
 | Port → Container fallback | ✅ | ✅ | ✅ | ✅ | Used when the port is owned by PID 1 via systemd socket activation or a container runtime. A port published by Docker's `docker-proxy`, or by Docker Desktop's forwarders (`com.docker.backend`, plus `wslrelay` on Windows), is explained by the container's own process when it is visible, and by this view otherwise. In the TUI's Ports tab, opening such a port's owner shows the container. |

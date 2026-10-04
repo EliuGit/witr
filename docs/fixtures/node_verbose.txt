@@ -3,7 +3,7 @@ Target      : node
 Process     : node (pid 14233)
 User        : deploy
 Command     : node /srv/expense-manager/index.js
-Started     : 2 days ago (Fri 2026-10-02 08:13:55 +00:00)
+Started     : 2 days ago (Fri 2026-10-02 09:58:32 +00:00)
 Restarts    : 3
 
 Why It Exists :
@@ -15,7 +15,8 @@ Unit File   : /etc/systemd/system/pm2-deploy.service
 
 Working Dir : /srv/expense-manager
 Git Repo    : expense-manager (main)
-Sockets     : 127.0.0.1:5000 (TCP | LISTENING)
+Sockets     : 127.0.0.1:5000 (TCP | LISTENING, 2 connections)
+              127.0.0.1:51744 → 127.0.0.1:5432 (TCP | ESTABLISHED)
 
 
 Memory:

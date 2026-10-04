@@ -3,7 +3,7 @@ Target      : rsync
 Process     : rsync (pid 27310)
 User        : deploy
 Command     : rsync -a --partial /srv/uploads/ backup@10.0.4.20:/backups/uploads/
-Started     : 1 hour ago (Sun 2026-10-04 06:43:55 +00:00)
+Started     : 1 hour ago (Sun 2026-10-04 08:28:32 +00:00)
 
 Why It Exists :
   systemd (pid 1) → ? (original parent exited) → rsync (pid 27310)

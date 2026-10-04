@@ -90,10 +90,65 @@ func TestFormatSocket(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := formatSocket(tt.s); got != tt.want {
+			if got := formatSocket(socketRow{Socket: tt.s}); got != tt.want {
 				t.Errorf("formatSocket(%+v) = %q, want %q", tt.s, got, tt.want)
 			}
 		})
+	}
+}
+
+// A connection shows its remote end; a listener shows how many connections
+// it accepted, and those connections don't get rows of their own.
+func TestSocketRows(t *testing.T) {
+	t.Parallel()
+
+	in := []model.Socket{
+		{Address: "192.168.1.10", Port: 51744, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "10.0.4.20", RemotePort: 5432},
+		{Address: "127.0.0.1", Port: 5000, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 40001},
+		{Address: "::", Port: 5000, Protocol: "TCP6", State: "LISTEN"},
+		{Address: "127.0.0.1", Port: 5000, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 40002},
+		{Address: "127.0.0.1", Port: 5000, Protocol: "TCP", State: "CLOSE_WAIT", RemoteAddress: "127.0.0.1", RemotePort: 40003},
+		{Address: "2001:db8::10", Port: 51800, Protocol: "TCP6", State: "ESTABLISHED", RemoteAddress: "2001:db8::20", RemotePort: 443},
+	}
+	var got []string
+	for _, r := range socketRows(in) {
+		got = append(got, formatSocket(r))
+	}
+	want := []string{
+		"[::]:5000 (TCP6 | LISTENING, 2 connections)",
+		"192.168.1.10:51744 → 10.0.4.20:5432 (TCP | ESTABLISHED)",
+		"[2001:db8::10]:51800 → [2001:db8::20]:443 (TCP6 | ESTABLISHED)",
+		"127.0.0.1:5000 → 127.0.0.1:40003 (TCP | CLOSE_WAIT)",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("socket rows:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// A connection between two of the process's own sockets shows once, before
+// any listener folding: here the process also connects to its own listener.
+func TestSocketRowsInternalPairs(t *testing.T) {
+	t.Parallel()
+
+	in := []model.Socket{
+		{Address: "127.0.0.1", Port: 49710, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 49709},
+		{Address: "127.0.0.1", Port: 49709, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 49710},
+		{Address: "0.0.0.0", Port: 3306, Protocol: "TCP", State: "LISTEN"},
+		{Address: "127.0.0.1", Port: 3306, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 50001},
+		{Address: "127.0.0.1", Port: 50001, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 3306},
+		{Address: "127.0.0.1", Port: 3306, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "127.0.0.1", RemotePort: 50100},
+	}
+	var got []string
+	for _, r := range socketRows(in) {
+		got = append(got, formatSocket(r))
+	}
+	want := []string{
+		"0.0.0.0:3306 (TCP | LISTENING, 1 connection)",
+		"127.0.0.1:3306 ↔ 127.0.0.1:50001 (TCP | ESTABLISHED, within the process)",
+		"127.0.0.1:49709 ↔ 127.0.0.1:49710 (TCP | ESTABLISHED, within the process)",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("socket rows:\n got: %q\nwant: %q", got, want)
 	}
 }
 

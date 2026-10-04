@@ -93,13 +93,17 @@ func readSockets() (map[string]model.Socket, error) {
 			inode := fields[9]
 
 			addr, port := parseAddr(local, ipv6)
-			sockets[inode] = model.Socket{
+			s := model.Socket{
 				Inode:    inode,
 				Port:     port,
 				Address:  addr,
 				State:    socketState(proto, stateHex),
 				Protocol: proto,
 			}
+			if raddr, rport := parseAddr(fields[2], ipv6); rport > 0 {
+				s.RemoteAddress, s.RemotePort = raddr, rport
+			}
+			sockets[inode] = s
 		}
 	}
 

@@ -331,17 +331,15 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		}
 	}
 
-	// Sockets section (address:port (proto | state))
-	if len(proc.Sockets) > 0 {
-		visible := visibleSockets(proc.Sockets)
-		sortSockets(visible)
-		count := len(visible)
-		for i, s := range visible {
+	// Sockets section: listeners, with the connections they accepted folded
+	// into a count, then other sockets with the remote end of a connection.
+	if rows := socketRows(proc.Sockets); len(rows) > 0 {
+		for i, r := range rows {
 			if i >= MaxDisplayItems {
-				out.Printf("              ... and %d more\n", count-i)
+				out.Printf("              ... and %d more\n", len(rows)-i)
 				break
 			}
-			line := SanitizeTerminal(formatSocket(s))
+			line := SanitizeTerminal(formatSocket(r))
 			switch {
 			case i == 0 && colorEnabled:
 				out.Printf("%sSockets%s     : %s\n", ColorGreen, ColorReset, line)
@@ -609,16 +607,90 @@ func formatBytes(n uint64) string {
 }
 
 // formatSocket renders one row of the Sockets section as
-// "<address>:<port> (<PROTO> | <STATE>)".
-func formatSocket(s model.Socket) string {
-	addr := s.Address
-	hostPort := net.JoinHostPort(addr, strconv.Itoa(s.Port))
-	proto := s.Protocol
+// "<address>:<port> (<PROTO> | <STATE>)". A connection adds its remote end
+// (" → ", or " ↔ " when both ends are the process's own), and a listener the
+// number of connections it accepted.
+func formatSocket(r socketRow) string {
+	hostPort := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
+	if r.RemoteAddress != "" && r.RemotePort > 0 {
+		arrow := " → "
+		if r.internal {
+			arrow = " ↔ "
+		}
+		hostPort += arrow + net.JoinHostPort(r.RemoteAddress, strconv.Itoa(r.RemotePort))
+	}
+	proto := r.Protocol
 	if proto == "" {
 		proto = "?"
 	}
-	state := displayState(s.State)
+	state := displayState(r.State)
+	switch {
+	case r.internal:
+		state += ", within the process"
+	case r.accepted == 1:
+		state += ", 1 connection"
+	case r.accepted > 1:
+		state += fmt.Sprintf(", %d connections", r.accepted)
+	}
 	return fmt.Sprintf("%s (%s | %s)", hostPort, proto, state)
+}
+
+// socketRow is one row of the Sockets section.
+type socketRow struct {
+	model.Socket
+	accepted int  // connections folded into this listener
+	internal bool // both ends of the connection belong to the process
+}
+
+// socketRows orders a process's sockets for display. A connection whose two
+// ends are both the process's own (on Windows, libraries emulate socket pairs
+// this way) shows once. Each other established connection on a port the
+// process listens on folds into that listener's count, so a busy server's
+// listeners aren't buried under its clients. Outbound connections and
+// connections in other states stay as rows of their own.
+func socketRows(sockets []model.Socket) []socketRow {
+	visible := visibleSockets(sockets)
+	sortSockets(visible)
+
+	family := func(s model.Socket) string { return strings.TrimSuffix(s.Protocol, "6") }
+	endpoint := func(s model.Socket, addr string, port int) string {
+		return family(s) + "|" + net.JoinHostPort(addr, strconv.Itoa(port))
+	}
+	own := make(map[string]bool) // local ends of the process's connections
+	for _, s := range visible {
+		if s.State == "ESTABLISHED" {
+			own[endpoint(s, s.Address, s.Port)] = true
+		}
+	}
+	shown := make(map[string]bool) // far ends of the pairs already shown
+
+	listener := make(map[string]int) // protocol family and port → row index
+	key := func(s model.Socket) string {
+		return family(s) + "|" + strconv.Itoa(s.Port)
+	}
+	rows := make([]socketRow, 0, len(visible))
+	for _, s := range visible {
+		if s.State == "ESTABLISHED" && s.RemotePort > 0 && own[endpoint(s, s.RemoteAddress, s.RemotePort)] {
+			if !shown[endpoint(s, s.Address, s.Port)] {
+				shown[endpoint(s, s.RemoteAddress, s.RemotePort)] = true
+				rows = append(rows, socketRow{Socket: s, internal: true})
+			}
+			continue
+		}
+		if s.State == "ESTABLISHED" {
+			if i, ok := listener[key(s)]; ok {
+				rows[i].accepted++
+				continue
+			}
+		}
+		if s.State == "LISTEN" {
+			if _, ok := listener[key(s)]; !ok {
+				listener[key(s)] = len(rows)
+			}
+		}
+		rows = append(rows, socketRow{Socket: s})
+	}
+	return rows
 }
 
 // displayState pretty-prints socket states. The kernel-style "LISTEN" reads
@@ -662,18 +734,25 @@ func visibleSockets(sockets []model.Socket) []model.Socket {
 	return out
 }
 
-// sortSockets orders sockets for the Sockets section in place: addresses
-// grouped together, ports ascending within an address, LISTEN above
-// ESTABLISHED when they share an address:port pair.
+// sortSockets orders sockets for the Sockets section in place: listeners
+// first, then connected sockets, then everything else, so connections can't
+// push a listener past the row limit. Within that, addresses are grouped,
+// ports ascend and remote ends break ties.
 func sortSockets(sockets []model.Socket) {
 	sort.SliceStable(sockets, func(i, j int) bool {
 		a, b := sockets[i], sockets[j]
+		if ra, rb := socketSortRank(a.State), socketSortRank(b.State); ra != rb {
+			return ra < rb
+		}
 		if a.Address != b.Address {
 			return a.Address < b.Address
 		}
 		if a.Port != b.Port {
 			return a.Port < b.Port
 		}
-		return socketSortRank(a.State) < socketSortRank(b.State)
+		if a.RemoteAddress != b.RemoteAddress {
+			return a.RemoteAddress < b.RemoteAddress
+		}
+		return a.RemotePort < b.RemotePort
 	})
 }

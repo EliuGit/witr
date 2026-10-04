@@ -78,7 +78,7 @@ func parseLsofPorts(out string) []model.OpenPort {
 		}
 
 		// Address:Port, or local->remote for a connected socket.
-		nameField, _, _ := strings.Cut(fields[8], "->")
+		nameField, remoteField, _ := strings.Cut(fields[8], "->")
 		state := "UNKNOWN"
 		if len(fields) > 9 {
 			state = strings.Trim(fields[9], "()")
@@ -102,12 +102,15 @@ func parseLsofPorts(out string) []model.OpenPort {
 		}
 
 		if port > 0 {
+			remoteAddr, remotePort := parseNetstatAddr(remoteField)
 			ports = append(ports, model.OpenPort{
-				PID:      pid,
-				Port:     port,
-				Address:  addr,
-				Protocol: protocol,
-				State:    state,
+				PID:           pid,
+				Port:          port,
+				Address:       addr,
+				Protocol:      protocol,
+				State:         state,
+				RemoteAddress: remoteAddr,
+				RemotePort:    remotePort,
 			})
 		}
 	}
@@ -120,7 +123,7 @@ func parseLsofPorts(out string) []model.OpenPort {
 // Linux.
 func missingPorts(sockets, owned []model.OpenPort) []model.OpenPort {
 	key := func(p model.OpenPort) string {
-		return fmt.Sprintf("%s|%s|%d|%s", p.Protocol, p.Address, p.Port, p.State)
+		return fmt.Sprintf("%s|%s|%d|%s|%s|%d", p.Protocol, p.Address, p.Port, p.State, p.RemoteAddress, p.RemotePort)
 	}
 	seen := make(map[string]bool, len(owned))
 	for _, p := range owned {
@@ -171,6 +174,7 @@ func parseNetstatSockets(out string) []model.OpenPort {
 			continue
 		}
 		p.Address, p.Port = parseNetstatAddr(fields[3])
+		p.RemoteAddress, p.RemotePort = parseNetstatAddr(fields[4])
 		if p.Port == 0 {
 			continue
 		}

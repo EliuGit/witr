@@ -5,8 +5,8 @@
 [94mCompose File[0m: /srv/expense-manager/docker-compose.yml
 [94mCompose Dir[0m : /srv/expense-manager
 [94mCommand[0m     : docker-entrypoint.sh redis-server --appendonly yes
-[95mStarted[0m     : 5 days ago (Tue 2026-09-29 08:13:55 +00:00)
-[94mCreated[0m     : Tue 2026-09-29 08:03:55 +00:00
+[95mStarted[0m     : 5 days ago (Tue 2026-09-29 09:58:32 +00:00)
+[94mCreated[0m     : Tue 2026-09-29 09:48:32 +00:00
 [94mNetwork[0m     : expense-manager_default
 
 [95mWhy It Exists[0m :
