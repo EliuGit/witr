@@ -151,6 +151,16 @@ func TestWarningsUnknownSupervisor(t *testing.T) {
 	}
 }
 
+func TestUntraced(t *testing.T) {
+	t.Parallel()
+	if Untraced(model.SourceUnknown) != (runtime.GOOS != "windows") {
+		t.Errorf("Untraced(unknown) = %v on %s", Untraced(model.SourceUnknown), runtime.GOOS)
+	}
+	if Untraced(model.SourceSystemd) {
+		t.Error("a known source is traced")
+	}
+}
+
 func TestWarningsLongRunning(t *testing.T) {
 	t.Parallel()
 
@@ -187,6 +197,112 @@ func TestWarningsSuspiciousWorkingDirs(t *testing.T) {
 				t.Errorf("expected suspicious-dir warning for %q, got: %v", dir, wrap(p))
 			}
 		})
+	}
+}
+
+func TestWarningsOrphaned(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unknown sources are not warned about on Windows")
+	}
+
+	parent := baseProc()
+	parent.PID = 1
+	p := baseProc()
+	p.ParentExited = true
+	got := Warnings([]model.Process{parent, p}, 0, model.SourceUnknown)
+	if !contains(got, "Original parent process has exited") || contains(got, "No known supervisor") {
+		t.Errorf("an orphan with no traceable source should get the orphan warning only, got: %v", got)
+	}
+}
+
+func TestExplainsOrphan(t *testing.T) {
+	t.Parallel()
+
+	shellBelow := []model.Process{{PID: 250, Command: "bash"}, {PID: 300, Command: "sleep"}}
+	targetOnly := []model.Process{{PID: 300, Command: "sleep"}}
+	tests := []struct {
+		name  string
+		src   model.Source
+		below []model.Process
+		want  bool
+	}{
+		{"container", model.Source{Type: model.SourceContainer, Name: "docker"}, targetOnly, true},
+		{"systemd service", model.Source{Type: model.SourceSystemd, Name: "cron.service"}, targetOnly, true},
+		{"login session scope", model.Source{Type: model.SourceSystemd, Name: "session-2.scope"}, targetOnly, true},
+		{"app launch scope", model.Source{Type: model.SourceSystemd, Name: "app-gnome-firefox-4242.scope"}, targetOnly, true},
+		{"init.scope", model.Source{Type: model.SourceSystemd, Name: "init.scope"}, targetOnly, false},
+		{"user manager", model.Source{Type: model.SourceSystemd, Name: "user@1000.service"}, targetOnly, false},
+		{"launchd job", model.Source{Type: model.SourceLaunchd, Name: "com.example.agent"}, targetOnly, true},
+		{"bare launchd", model.Source{Type: model.SourceLaunchd, Name: "launchd"}, targetOnly, false},
+		{"rc service from pidfile", model.Source{Type: model.SourceBsdRc, Name: "nginx", Details: map[string]string{"service": "nginx"}}, targetOnly, true},
+		{"rc guess from parent", model.Source{Type: model.SourceBsdRc, Name: "sleep"}, targetOnly, false},
+		{"shell that started it", model.Source{Type: model.SourceShell, Name: "bash"}, shellBelow, true},
+		{"shell above the cut", model.Source{Type: model.SourceShell, Name: "bash"}, targetOnly, false},
+		{"init", model.Source{Type: model.SourceInit, Name: "systemd"}, targetOnly, false},
+	}
+	for _, tt := range tests {
+		if got := explainsOrphan(tt.src, tt.below); got != tt.want {
+			t.Errorf("%s: explainsOrphan = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestForOrphan(t *testing.T) {
+	t.Parallel()
+
+	intact := []model.Process{{PID: 1}, {PID: 300, PPID: 1}}
+	orphan := []model.Process{{PID: 1}, {PID: 300, PPID: 1, ParentExited: true}}
+	initSrc := model.Source{Type: model.SourceInit, Name: "openrc-init"}
+
+	if got := forOrphan(initSrc, intact); got.Description != "" {
+		t.Errorf("an intact chain must keep its source unchanged, got %+v", got)
+	}
+	if got := forOrphan(initSrc, orphan); got.Type != model.SourceInit || got.Description != adoptedByInitDescription {
+		t.Errorf("init should stay the source but say it only adopted the process, got %+v", got)
+	}
+	if got := forOrphan(model.Source{Type: model.SourceSystemd, Name: "init.scope"}, orphan); got.Type != model.SourceUnknown {
+		t.Errorf("init.scope only adopted the process, so the source should be unknown, got %+v", got)
+	}
+	if got := forOrphan(model.Source{Type: model.SourceSystemd, Name: "session-2.scope"}, orphan); got.Name != "session-2.scope" {
+		t.Errorf("a login session scope still says where the process came from, got %+v", got)
+	}
+}
+
+func TestWarningsContainerWorkingDirNotSuspicious(t *testing.T) {
+	t.Parallel()
+
+	p := baseProc()
+	p.WorkingDir = "/"
+	p.ContainerID = "c67b85f01c07a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	if contains(wrap(p), "suspicious working directory") {
+		t.Errorf("a container's \"/\" working directory should not warn, got: %v", wrap(p))
+	}
+}
+
+func TestIsContainerCgroup(t *testing.T) {
+	t.Parallel()
+
+	const id = "c67b85f01c07a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name    string
+		cgroup  string
+		markers []string
+		want    bool
+	}{
+		{"docker systemd-driver scope", "0::/system.slice/docker-" + id + ".scope", []string{"docker"}, true},
+		{"docker cgroupfs-driver path", "12:pids:/docker/" + id, []string{"docker"}, true},
+		{"dockerd and docker-proxy", "0::/system.slice/docker.service", []string{"docker"}, false},
+		{"rootless podman container", "0::/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-" + id + ".scope", []string{"podman", "libpod"}, true},
+		{"podman API service", "0::/system.slice/podman.service", []string{"podman", "libpod"}, false},
+		{"podman conmon monitor", "0::/machine.slice/libpod-conmon-" + id + ".scope", []string{"podman", "libpod"}, false},
+		{"containerd daemon and shims", "0::/system.slice/containerd.service", []string{"containerd"}, false},
+		{"another runtime's container", "0::/system.slice/docker-" + id + ".scope", []string{"containerd"}, false},
+	}
+	for _, tt := range tests {
+		if got := isContainerCgroup(tt.cgroup, tt.markers...); got != tt.want {
+			t.Errorf("%s: isContainerCgroup(%q, %v) = %v, want %v", tt.name, tt.cgroup, tt.markers, got, tt.want)
+		}
 	}
 }
 
@@ -296,5 +412,17 @@ func TestWarningsEmptyInputReturnsNil(t *testing.T) {
 
 	if got := Warnings(nil, 0); got != nil {
 		t.Errorf("Warnings(nil) = %v, want nil", got)
+	}
+}
+
+// A container that keeps restarting is named as a container.
+func TestWarningsContainerRestarts(t *testing.T) {
+	t.Parallel()
+	got := Warnings([]model.Process{baseProc()}, 9, model.SourceContainer)
+	if !contains(got, "Container has restarted 9 times") {
+		t.Errorf("expected the container restart warning, got: %v", got)
+	}
+	if got := Warnings([]model.Process{baseProc()}, 9, model.SourceSystemd); !contains(got, "Service has restarted 9 times") {
+		t.Errorf("expected the service restart warning, got: %v", got)
 	}
 }

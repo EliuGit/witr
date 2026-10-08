@@ -1,0 +1,19 @@
+Target      : container expense-manager-cache-1
+
+Container   : expense-manager-cache-1 (id 3f9a1c2b7d4e) [healthy]
+Image       : redis:7-alpine
+Compose File: /srv/expense-manager/docker-compose.yml
+Compose Dir : /srv/expense-manager
+Command     : docker-entrypoint.sh redis-server --appendonly yes
+Started     : 5 days ago (Tue 2026-09-29 10:28:38 +00:00)
+Created     : Tue 2026-09-29 10:18:38 +00:00
+Restarts    : 2 (policy: always)
+Network     : expense-manager_default
+
+Why It Exists :
+  docker → expense-manager (docker-compose) → expense-manager-cache-1
+
+Source      : docker-compose: expense-manager/cache
+Sockets     : 127.0.0.1:6379->6379/tcp
+
+Note        : The owning process is not visible in this environment.

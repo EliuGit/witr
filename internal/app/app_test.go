@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +47,17 @@ func TestClassifyError(t *testing.T) {
 	}
 }
 
+// Only a lookup that found nothing gets the not-found hint.
+func TestErrorWithHint(t *testing.T) {
+	t.Parallel()
+	if got := errorWithHint(errors.New("invalid pid")); strings.Contains(got, "No matching") {
+		t.Errorf("invalid input got the not-found hint:\n%s", got)
+	}
+	if got := errorWithHint(errors.New(`no running process or service named "x"`)); !strings.Contains(got, "No matching") {
+		t.Errorf("a lookup that found nothing lost its hint:\n%s", got)
+	}
+}
+
 // An internal error must be distinguishable from "process has warnings" so
 // scripts gating on exit 1 don't conflate the two.
 func TestExitCodesDistinct(t *testing.T) {
@@ -55,5 +67,20 @@ func TestExitCodesDistinct(t *testing.T) {
 	}
 	if ExitInternalError != 5 {
 		t.Errorf("ExitInternalError = %d, want 5 (documented)", ExitInternalError)
+	}
+	if ExitCauseUnknown != 6 {
+		t.Errorf("ExitCauseUnknown = %d, want 6 (documented)", ExitCauseUnknown)
+	}
+}
+
+// Across several targets the most severe code wins: cause unknown outranks
+// plain warnings but not any failure.
+func TestExitSeverityOrder(t *testing.T) {
+	t.Parallel()
+	order := []int{ExitOK, ExitWarnings, ExitCauseUnknown, ExitNotFound, ExitPermission, ExitInvalidInput, ExitInternalError}
+	for i := 1; i < len(order); i++ {
+		if exitSeverity[order[i]] <= exitSeverity[order[i-1]] {
+			t.Errorf("exit %d should rank above exit %d", order[i], order[i-1])
+		}
 	}
 }

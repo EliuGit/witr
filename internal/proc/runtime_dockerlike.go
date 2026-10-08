@@ -2,10 +2,12 @@ package proc
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -32,7 +34,9 @@ var rootlessBins = map[string]bool{
 	"nerdctl": true,
 }
 
-func dockerLikeList(bin, runtime string) []*model.ContainerMatch {
+// dockerLikeList lists running containers via a docker-compatible CLI,
+// narrowed by any extra `ps` arguments (e.g. "--filter", "id=<id>").
+func dockerLikeList(bin, runtime string, filters ...string) []*model.ContainerMatch {
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
 	defer cancel()
 
@@ -52,19 +56,29 @@ func dockerLikeList(bin, runtime string) []*model.ContainerMatch {
 		"{{.Mounts}}",
 		"{{.Ports}}",
 		"{{.Labels}}",
-	}, "|")
-	out, err := runtimeCommand(ctx, bin, "ps", "--no-trunc", "--format", format).Output()
+	}, listFieldSep)
+	args := append([]string{"ps", "--no-trunc", "--format", format}, filters...)
+	out, err := runtimeCommand(ctx, bin, args...).Output()
 	if err != nil {
 		return nil
 	}
+	return parseDockerLikeList(string(out), runtime)
+}
 
+// listFieldSep separates the fields of a `ps --format` line. A command can hold
+// any printable character ("sh -c 'a | b'"), so the separator is the ASCII unit
+// separator, which no field contains.
+const listFieldSep = "\x1f"
+
+// parseDockerLikeList parses the `ps --format` output of dockerLikeList.
+func parseDockerLikeList(out, runtime string) []*model.ContainerMatch {
 	var matches []*model.ContainerMatch
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 11)
+		parts := strings.SplitN(line, listFieldSep, 11)
 		if len(parts) < 11 {
 			continue
 		}
@@ -74,7 +88,7 @@ func dockerLikeList(bin, runtime string) []*model.ContainerMatch {
 			ID:                parts[0],
 			Name:              parts[1],
 			Image:             parts[2],
-			Command:           strings.Trim(parts[3], "\""),
+			Command:           unquoteCommand(parts[3]),
 			State:             parts[4],
 			Status:            parts[5],
 			Health:            healthFromStatus(parts[5]),
@@ -89,6 +103,15 @@ func dockerLikeList(bin, runtime string) []*model.ContainerMatch {
 		})
 	}
 	return matches
+}
+
+// unquoteCommand undoes Docker's quoting of the command (Go syntax, so inner
+// quotes come escaped); Podman and nerdctl print it bare or merely wrapped.
+func unquoteCommand(s string) string {
+	if u, err := strconv.Unquote(s); err == nil {
+		return u
+	}
+	return strings.Trim(s, "\"")
 }
 
 // parseLabelString turns "key1=val1,key2=val2" into a map. Values with embedded
@@ -137,36 +160,101 @@ func parseDockerTime(s string) time.Time {
 }
 
 func dockerLikeHostPID(bin, id string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
-	defer cancel()
-	out, err := runtimeCommand(ctx, bin, "inspect", "-f", "{{.State.Pid}}", id).Output()
-	if err != nil {
+	d, ok := inspectContainer(bin, id)
+	if !ok {
 		return 0
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	return pid
+	return d.State.Pid
 }
 
-// dockerLikeEnrich fills in the container's actual start time via
-// `<bin> inspect --format '{{.State.StartedAt}}'`. The list scan only gives
-// us creation time, which is misleading for any container that was stopped
-// and restarted later.
+// containerInspect is the part of a `<bin> inspect` document witr reads.
+// Reading the whole document rather than a template keeps a field one runtime
+// lacks from failing the rest.
+type containerInspect struct {
+	Name  string
+	State struct {
+		Pid       int
+		StartedAt string
+	}
+	RestartCount int
+	HostConfig   struct {
+		RestartPolicy struct {
+			Name              string
+			MaximumRetryCount int
+		}
+	}
+	Config struct {
+		Labels      map[string]string
+		Healthcheck json.RawMessage
+	}
+}
+
+const inspectCacheTTL = 2 * time.Second
+
+var (
+	inspectMu    sync.Mutex
+	inspectCache = map[string]cachedInspect{}
+)
+
+type cachedInspect struct {
+	doc containerInspect
+	ok  bool
+	at  time.Time
+}
+
+// inspectContainer returns a container's inspect document. One analysis asks
+// for a container's main PID, name, start time, restarts and healthcheck, and
+// each call to a rootless runtime costs most of a second, so documents are
+// kept briefly.
+func inspectContainer(bin, id string) (containerInspect, bool) {
+	key := bin + "|" + id
+	inspectMu.Lock()
+	c, hit := inspectCache[key]
+	inspectMu.Unlock()
+	if hit && time.Since(c.at) < inspectCacheTTL {
+		return c.doc, c.ok
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
+	defer cancel()
+	c = cachedInspect{at: time.Now()}
+	if out, err := runtimeCommand(ctx, bin, "inspect", "--format", "{{json .}}", id).Output(); err == nil {
+		c.doc, c.ok = parseContainerInspect(out)
+	}
+	inspectMu.Lock()
+	inspectCache[key] = c
+	inspectMu.Unlock()
+	return c.doc, c.ok
+}
+
+func parseContainerInspect(doc []byte) (containerInspect, bool) {
+	var c containerInspect
+	return c, json.Unmarshal(doc, &c) == nil
+}
+
+// dockerLikeEnrich fills in what only `<bin> inspect` reports: the actual
+// start time (the list scan only gives creation time, misleading for a
+// container that was stopped and restarted later), the restart count and the
+// restart policy.
 func dockerLikeEnrich(bin string, match *model.ContainerMatch) {
 	if match == nil || match.ID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeQueryTimeout)
-	defer cancel()
-	out, err := runtimeCommand(ctx, bin, "inspect", "-f", "{{.State.StartedAt}}", match.ID).Output()
-	if err != nil {
-		return
+	if c, ok := inspectContainer(bin, match.ID); ok {
+		applyDockerInspect(match, c)
 	}
-	s := strings.TrimSpace(string(out))
-	if s == "" || s == "0001-01-01T00:00:00Z" {
-		return
-	}
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+}
+
+// applyDockerInspect copies the start time, restart count and restart policy
+// from a container's inspect document.
+func applyDockerInspect(match *model.ContainerMatch, c containerInspect) {
+	if t, err := time.Parse(time.RFC3339Nano, c.State.StartedAt); err == nil && !t.IsZero() {
 		match.StartedAt = t
+	}
+	match.RestartCount = c.RestartCount
+	policy := c.HostConfig.RestartPolicy
+	match.RestartPolicy = policy.Name
+	if policy.Name == "on-failure" && policy.MaximumRetryCount > 0 {
+		match.RestartPolicy += ":" + strconv.Itoa(policy.MaximumRetryCount)
 	}
 }
 

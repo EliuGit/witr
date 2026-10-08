@@ -33,13 +33,39 @@ jobs:
             exit 1
           fi
 
+      # Git for Windows defaults to core.symlinks=false, so a tracked symlink
+      # (mode 120000) is checked out as a plain text file holding the link
+      # target; that made `go build ./...` and `go test ./...` fail at the module
+      # root on Windows. CI checks out symlinks, so guard against reintroducing
+      # them instead of relying on the Windows test job to notice.
+      - name: Verify tracked files do not rely on symlinks
+        run: |
+          links="$(git ls-files -s | awk '$1 == "120000"')"
+          if [ -n "$links" ]; then
+            echo "Tracked symlinks cannot be checked out where symlinks are unsupported:"
+            echo "$links"
+            exit 1
+          fi
+
   golangci-lint:
-    name: "Code Quality: Lint (${{ matrix.goos }})"
+    name: "Code Quality: Lint (${{ matrix.goos }}/${{ matrix.goarch }})"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        goos: [linux, darwin, windows, freebsd]
+        include:
+          - goos: linux
+            goarch: amd64
+          # LoongArch (龙芯) is a Linux-only architecture; lint the linux/loong64
+          # build so build-tag/arch regressions surface in CI.
+          - goos: linux
+            goarch: loong64
+          - goos: darwin
+            goarch: amd64
+          - goos: windows
+            goarch: amd64
+          - goos: freebsd
+            goarch: amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -58,6 +84,7 @@ jobs:
           version: v2.12.2
         env:
           GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
 
   govulncheck:
     name: "Security: Vulnerability Scan"
@@ -73,7 +100,7 @@ jobs:
           check-latest: true
 
       - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
   vendor:
     name: "Code Quality: Vendor"

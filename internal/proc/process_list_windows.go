@@ -23,6 +23,11 @@ func ListProcesses() ([]model.Process, error) {
 
 	out := make([]model.Process, 0, len(procs))
 	for _, p := range procs {
+		// PID 0 is the System Idle Process, a placeholder rather than a
+		// process; the CLI rejects it too.
+		if p.PID == 0 {
+			continue
+		}
 		rss, cpu, cpuTime, started := windowsProcMetrics(p.PID)
 		out = append(out, model.Process{
 			PID:           p.PID,

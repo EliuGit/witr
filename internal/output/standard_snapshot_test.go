@@ -23,9 +23,9 @@ func fixedFixture() model.Result {
 		StartedAt: startedAt,
 		Service:   "nginx.service",
 		Sockets: []model.Socket{
-			{Address: "192.168.1.5", Port: 80, Protocol: "TCP", State: "ESTABLISHED"},
+			{Address: "192.168.1.5", Port: 41000, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "10.0.0.9", RemotePort: 8080},
 			{Address: "0.0.0.0", Port: 443, Protocol: "TCP", State: "LISTEN"},
-			{Address: "0.0.0.0", Port: 443, Protocol: "TCP", State: "ESTABLISHED"},
+			{Address: "192.168.1.5", Port: 443, Protocol: "TCP", State: "ESTABLISHED", RemoteAddress: "203.0.113.7", RemotePort: 55100},
 			{Address: "0.0.0.0", Port: 80, Protocol: "TCP", State: "LISTEN"},
 		},
 		Health: "healthy",
@@ -77,9 +77,8 @@ func TestRenderStandardContract(t *testing.T) {
 		"Source      : nginx.service (systemd)",
 		"Sockets     :",
 		"0.0.0.0:80 (TCP | LISTENING)",
-		"0.0.0.0:443 (TCP | LISTENING)",
-		"0.0.0.0:443 (TCP | ESTABLISHED)",
-		"192.168.1.5:80 (TCP | ESTABLISHED)",
+		"0.0.0.0:443 (TCP | LISTENING, 1 connection)",
+		"192.168.1.5:41000 → 10.0.0.9:8080 (TCP | ESTABLISHED)",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(out, s) {
@@ -89,8 +88,8 @@ func TestRenderStandardContract(t *testing.T) {
 }
 
 // TestRenderStandardSocketsOrder verifies the Sockets section actually emits
-// rows in sortSockets order: addresses grouped, LISTEN above ESTABLISHED on
-// shared address:port, ports ascending. This is the renderer-level mirror of
+// rows in socketRows order: listeners first with the connections they accepted
+// folded in, then connections with their remote end. This is the renderer-level mirror of
 // TestSortSockets — it catches regressions where the comparator is correct
 // but the renderer accidentally re-orders the slice afterwards.
 func TestRenderStandardSocketsOrder(t *testing.T) {
@@ -102,9 +101,8 @@ func TestRenderStandardSocketsOrder(t *testing.T) {
 
 	rows := []string{
 		"0.0.0.0:80 (TCP | LISTENING)",
-		"0.0.0.0:443 (TCP | LISTENING)",
-		"0.0.0.0:443 (TCP | ESTABLISHED)",
-		"192.168.1.5:80 (TCP | ESTABLISHED)",
+		"0.0.0.0:443 (TCP | LISTENING, 1 connection)",
+		"192.168.1.5:41000 → 10.0.0.9:8080 (TCP | ESTABLISHED)",
 	}
 	last := -1
 	for _, row := range rows {

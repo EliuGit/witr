@@ -55,8 +55,43 @@
       "name": "postgres_port_verbose",
       "pid": "2010",
       "value": "5432"
+    },
+    {
+      "kind": "pid",
+      "mode": "standard",
+      "name": "rsync_standard",
+      "pid": "27310",
+      "value": "27310"
+    },
+    {
+      "kind": "pid",
+      "mode": "short",
+      "name": "rsync_short",
+      "pid": "27310",
+      "value": "27310"
+    },
+    {
+      "kind": "pid",
+      "mode": "tree",
+      "name": "rsync_tree",
+      "pid": "27310",
+      "value": "27310"
+    },
+    {
+      "kind": "container",
+      "mode": "standard",
+      "name": "api_container",
+      "pid": "3141",
+      "value": "expense-manager-api-1"
+    },
+    {
+      "kind": "container",
+      "mode": "standard",
+      "name": "redis_container",
+      "pid": "0",
+      "value": "expense-manager-cache-1"
     }
   ],
-  "generatedAtMs": 1784798440836,
+  "generatedAtMs": 1791109718313,
   "world": "webbox"
 }

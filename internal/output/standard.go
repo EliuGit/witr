@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,10 +126,18 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 	}
 	out.Println("")
 	if proc.User != "" && proc.User != "unknown" {
+		user := proc.User + integrityNote(proc.IntegrityLevel)
 		if colorEnabled {
-			out.Printf("%sUser%s        : %s\n", ColorBlue, ColorReset, proc.User)
+			out.Printf("%sUser%s        : %s\n", ColorBlue, ColorReset, user)
 		} else {
-			out.Printf("User        : %s\n", proc.User)
+			out.Printf("User        : %s\n", user)
+		}
+	}
+	if label := securityLabel(proc); label != "" {
+		if colorEnabled {
+			out.Printf("%sSecurity%s    : %s\n", ColorBlue, ColorReset, label)
+		} else {
+			out.Printf("Security    : %s\n", label)
 		}
 	}
 
@@ -139,6 +148,23 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		} else {
 			out.Printf("Container   : %s\n", proc.Container)
 		}
+	}
+	if c := r.Container; c != nil {
+		if image := SanitizeTerminalLine(c.Image); image != "" {
+			if colorEnabled {
+				out.Printf("%sImage%s       : %s\n", ColorBlue, ColorReset, image)
+			} else {
+				out.Printf("Image       : %s\n", image)
+			}
+		}
+		if ports := SanitizeTerminalLine(c.Ports); ports != "" {
+			if colorEnabled {
+				out.Printf("%sPublished%s   : %s\n", ColorBlue, ColorReset, ports)
+			} else {
+				out.Printf("Published   : %s\n", ports)
+			}
+		}
+		printComposeOrigin(out, c, colorEnabled)
 	}
 	// Service
 	if proc.Service != "" {
@@ -162,20 +188,27 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 			out.Printf("Command     : %s\n", proc.Command)
 		}
 	}
-	rel, dtStr := FormatStartedAt(proc.StartedAt)
+	started, dtStr := FormatStartedAt(proc.StartedAt)
+	if dtStr != "" {
+		started += " (" + dtStr + ")"
+	}
 	if colorEnabled {
-		out.Printf("%sStarted%s     : %s (%s)\n", ColorMagenta, ColorReset, rel, dtStr)
+		out.Printf("%sStarted%s     : %s\n", ColorMagenta, ColorReset, started)
 	} else {
-		out.Printf("Started     : %s (%s)\n", rel, dtStr)
+		out.Printf("Started     : %s\n", started)
 	}
 
-	// Restart count (sourced from systemd's NRestarts); shown only when the
-	// managing system has restarted the unit at least once.
-	if r.RestartCount > 0 {
+	// Restarts by the managing system (systemd's NRestarts, or the container
+	// runtime's count), with the container's restart policy.
+	policy := ""
+	if r.Container != nil {
+		policy = r.Container.RestartPolicy
+	}
+	if v := restartsValue(r.RestartCount, policy); v != "" {
 		if colorEnabled {
-			out.Printf("%sRestarts%s    : %d\n", ColorMagenta, ColorReset, r.RestartCount)
+			out.Printf("%sRestarts%s    : %s\n", ColorMagenta, ColorReset, v)
 		} else {
-			out.Printf("Restarts    : %d\n", r.RestartCount)
+			out.Printf("Restarts    : %s\n", v)
 		}
 	}
 
@@ -192,6 +225,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		out.Printf("\n%sWhy It Exists%s :\n  ", ColorMagenta, ColorReset)
 		for i, p := range r.Ancestry {
 			name := SanitizeTerminal(ChainName(p))
+			if gap := ParentGap(r.Ancestry, i); gap != "" {
+				out.Printf("%s%s%s %s→%s ", ColorDimYellow, gap, ColorReset, ColorMagenta, ColorReset)
+			}
 
 			nameColor := ansiString("")
 			if i == len(r.Ancestry)-1 {
@@ -207,6 +243,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		out.Printf("\nWhy It Exists :\n  ")
 		for i, p := range r.Ancestry {
 			name := SanitizeTerminal(ChainName(p))
+			if gap := ParentGap(r.Ancestry, i); gap != "" {
+				out.Printf("%s → ", gap)
+			}
 			out.Printf("%s (pid %d)", name, p.PID)
 			if i < len(r.Ancestry)-1 {
 				out.Printf(" \u2192 ")
@@ -260,10 +299,11 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 			pad = " "
 		}
 
+		unitFile := SanitizeTerminal(r.Source.UnitFile)
 		if colorEnabled {
-			out.Printf("%s%s%s%s: %s\n", ColorCyan, label, ColorReset, pad, r.Source.UnitFile)
+			out.Printf("%s%s%s%s: %s\n", ColorCyan, label, ColorReset, pad, unitFile)
 		} else {
-			out.Printf("%s%s: %s\n", label, pad, r.Source.UnitFile)
+			out.Printf("%s%s: %s\n", label, pad, unitFile)
 		}
 	}
 
@@ -308,17 +348,15 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		}
 	}
 
-	// Sockets section (address:port (proto | state))
-	if len(proc.Sockets) > 0 {
-		visible := visibleSockets(proc.Sockets)
-		sortSockets(visible)
-		count := len(visible)
-		for i, s := range visible {
+	// Sockets section: listeners, with the connections they accepted folded
+	// into a count, then other sockets with the remote end of a connection.
+	if rows := socketRows(proc.Sockets); len(rows) > 0 {
+		for i, r := range rows {
 			if i >= MaxDisplayItems {
-				out.Printf("              ... and %d more\n", count-i)
+				out.Printf("              ... and %d more\n", len(rows)-i)
 				break
 			}
-			line := SanitizeTerminal(formatSocket(s))
+			line := SanitizeTerminal(formatSocket(r))
 			switch {
 			case i == 0 && colorEnabled:
 				out.Printf("%sSockets%s     : %s\n", ColorGreen, ColorReset, line)
@@ -352,12 +390,12 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		if r.ResourceContext != nil {
 			if colorEnabled {
 				if r.ResourceContext.CPUUsage > 70 {
-					out.Printf("%sCPU%s         : %s%.1f%%%s\n", ColorRed, ColorReset, ColorDimYellow, r.ResourceContext.CPUUsage, ColorReset)
+					out.Printf("%sCPU (avg)%s   : %s%.1f%%%s\n", ColorRed, ColorReset, ColorDimYellow, r.ResourceContext.CPUUsage, ColorReset)
 				} else {
-					out.Printf("%sCPU%s         : %.1f%%\n", ColorGreen, ColorReset, r.ResourceContext.CPUUsage)
+					out.Printf("%sCPU (avg)%s   : %.1f%%\n", ColorGreen, ColorReset, r.ResourceContext.CPUUsage)
 				}
 			} else {
-				out.Printf("CPU         : %.1f%%\n", r.ResourceContext.CPUUsage)
+				out.Printf("CPU (avg)   : %.1f%%\n", r.ResourceContext.CPUUsage)
 			}
 
 			if r.ResourceContext.PreventsSleep {
@@ -379,10 +417,12 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 		}
 
 		// Memory information
-		if proc.Memory.VMS > 0 {
+		if proc.Memory.VMS > 0 || proc.Memory.RSS > 0 {
 			if colorEnabled {
 				out.Printf("\n%sMemory%s:\n", ColorGreen, ColorReset)
-				out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				if proc.Memory.VMS > 0 {
+					out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				}
 				out.Printf("  Resident : %s\n", formatBytes(proc.Memory.RSS))
 				if r.ResourceContext != nil && r.ResourceContext.MemoryUsage > 0 {
 					out.Printf("  Private  : %s\n", formatBytes(r.ResourceContext.MemoryUsage))
@@ -392,7 +432,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 				}
 			} else {
 				out.Printf("\nMemory:\n")
-				out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				if proc.Memory.VMS > 0 {
+					out.Printf("  Virtual  : %s\n", formatBytes(proc.Memory.VMS))
+				}
 				out.Printf("  Resident : %s\n", formatBytes(proc.Memory.RSS))
 				if r.ResourceContext != nil && r.ResourceContext.MemoryUsage > 0 {
 					out.Printf("  Private  : %s\n", formatBytes(r.ResourceContext.MemoryUsage))
@@ -488,12 +530,9 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 				return fdI < fdJ
 			})
 
+			label, count := fdSummary(proc)
 			if colorEnabled {
-				if proc.FDLimit == 0 {
-					out.Printf("\n%sFile Descriptors%s: %d/unlimited\n", ColorGreen, ColorReset, proc.FDCount)
-				} else {
-					out.Printf("\n%sFile Descriptors%s: %d/%d\n", ColorGreen, ColorReset, proc.FDCount, proc.FDLimit)
-				}
+				out.Printf("\n%s%s%s: %s\n", ColorGreen, label, ColorReset, count)
 				if len(proc.FileDescs) > 0 && len(proc.FileDescs) <= MaxDisplayItems {
 					for _, fd := range proc.FileDescs {
 						safeFd := SanitizeTerminalLine(fd)
@@ -510,11 +549,7 @@ func RenderStandard(w io.Writer, r model.Result, colorEnabled bool, verbose bool
 					out.Printf("  ... and %d more\n", len(proc.FileDescs)-MaxDisplayItems)
 				}
 			} else {
-				if proc.FDLimit == 0 {
-					out.Printf("\nFile Descriptors: %d/unlimited\n", proc.FDCount)
-				} else {
-					out.Printf("\nFile Descriptors: %d/%d\n", proc.FDCount, proc.FDLimit)
-				}
+				out.Printf("\n%s: %s\n", label, count)
 				if len(proc.FileDescs) > 0 && len(proc.FileDescs) <= MaxDisplayItems {
 					for _, fd := range proc.FileDescs {
 						out.Printf("  %s\n", SanitizeTerminal(fd))
@@ -585,17 +620,125 @@ func formatBytes(n uint64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// fdSummary labels and counts a process's open descriptors: file descriptors
+// against their limit, or on Windows handles, which have no per-process limit
+// worth showing.
+func fdSummary(p model.Process) (label, count string) {
+	switch {
+	case runtime.GOOS == "windows":
+		return "Handles", strconv.Itoa(p.FDCount)
+	case p.FDLimit == 0:
+		return "File Descriptors", fmt.Sprintf("%d/unlimited", p.FDCount)
+	}
+	return "File Descriptors", fmt.Sprintf("%d/%d", p.FDCount, p.FDLimit)
+}
+
+// integrityNote describes a Windows integrity level other than the normal
+// Medium, for the User line: " (elevated)" for High.
+func integrityNote(level string) string {
+	switch level {
+	case "", "Medium":
+		return ""
+	case "High":
+		return " (elevated)"
+	}
+	return " (" + strings.ToLower(SanitizeTerminalLine(level)) + " integrity)"
+}
+
+// securityLabel renders the Linux security module confining a process, or ""
+// when the process is unconfined (most are) or no module is active.
+func securityLabel(p model.Process) string {
+	if p.SecurityLabel == "" || strings.Contains(p.SecurityLabel, "unconfined") {
+		return ""
+	}
+	return SanitizeTerminalLine(p.SecurityModule + " " + p.SecurityLabel)
+}
+
 // formatSocket renders one row of the Sockets section as
-// "<address>:<port> (<PROTO> | <STATE>)".
-func formatSocket(s model.Socket) string {
-	addr := s.Address
-	hostPort := net.JoinHostPort(addr, strconv.Itoa(s.Port))
-	proto := s.Protocol
+// "<address>:<port> (<PROTO> | <STATE>)". A connection adds its remote end
+// (" → ", or " ↔ " when both ends are the process's own), and a listener the
+// number of connections it accepted.
+func formatSocket(r socketRow) string {
+	hostPort := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
+	if r.RemoteAddress != "" && r.RemotePort > 0 {
+		arrow := " → "
+		if r.internal {
+			arrow = " ↔ "
+		}
+		hostPort += arrow + net.JoinHostPort(r.RemoteAddress, strconv.Itoa(r.RemotePort))
+	}
+	proto := r.Protocol
 	if proto == "" {
 		proto = "?"
 	}
-	state := displayState(s.State)
+	state := displayState(r.State)
+	switch {
+	case r.internal:
+		state += ", within the process"
+	case r.accepted == 1:
+		state += ", 1 connection"
+	case r.accepted > 1:
+		state += fmt.Sprintf(", %d connections", r.accepted)
+	}
 	return fmt.Sprintf("%s (%s | %s)", hostPort, proto, state)
+}
+
+// socketRow is one row of the Sockets section.
+type socketRow struct {
+	model.Socket
+	accepted int  // connections folded into this listener
+	internal bool // both ends of the connection belong to the process
+}
+
+// socketRows orders a process's sockets for display. A connection whose two
+// ends are both the process's own (on Windows, libraries emulate socket pairs
+// this way) shows once. Each other established connection on a port the
+// process listens on folds into that listener's count, so a busy server's
+// listeners aren't buried under its clients. Outbound connections and
+// connections in other states stay as rows of their own.
+func socketRows(sockets []model.Socket) []socketRow {
+	visible := visibleSockets(sockets)
+	sortSockets(visible)
+
+	family := func(s model.Socket) string { return strings.TrimSuffix(s.Protocol, "6") }
+	endpoint := func(s model.Socket, addr string, port int) string {
+		return family(s) + "|" + net.JoinHostPort(addr, strconv.Itoa(port))
+	}
+	own := make(map[string]bool) // local ends of the process's connections
+	for _, s := range visible {
+		if s.State == "ESTABLISHED" {
+			own[endpoint(s, s.Address, s.Port)] = true
+		}
+	}
+	shown := make(map[string]bool) // far ends of the pairs already shown
+
+	listener := make(map[string]int) // protocol family and port → row index
+	key := func(s model.Socket) string {
+		return family(s) + "|" + strconv.Itoa(s.Port)
+	}
+	rows := make([]socketRow, 0, len(visible))
+	for _, s := range visible {
+		if s.State == "ESTABLISHED" && s.RemotePort > 0 && own[endpoint(s, s.RemoteAddress, s.RemotePort)] {
+			if !shown[endpoint(s, s.Address, s.Port)] {
+				shown[endpoint(s, s.RemoteAddress, s.RemotePort)] = true
+				rows = append(rows, socketRow{Socket: s, internal: true})
+			}
+			continue
+		}
+		if s.State == "ESTABLISHED" {
+			if i, ok := listener[key(s)]; ok {
+				rows[i].accepted++
+				continue
+			}
+		}
+		if s.State == "LISTEN" {
+			if _, ok := listener[key(s)]; !ok {
+				listener[key(s)] = len(rows)
+			}
+		}
+		rows = append(rows, socketRow{Socket: s})
+	}
+	return rows
 }
 
 // displayState pretty-prints socket states. The kernel-style "LISTEN" reads
@@ -639,18 +782,25 @@ func visibleSockets(sockets []model.Socket) []model.Socket {
 	return out
 }
 
-// sortSockets orders sockets for the Sockets section in place: addresses
-// grouped together, ports ascending within an address, LISTEN above
-// ESTABLISHED when they share an address:port pair.
+// sortSockets orders sockets for the Sockets section in place: listeners
+// first, then connected sockets, then everything else, so connections can't
+// push a listener past the row limit. Within that, addresses are grouped,
+// ports ascend and remote ends break ties.
 func sortSockets(sockets []model.Socket) {
 	sort.SliceStable(sockets, func(i, j int) bool {
 		a, b := sockets[i], sockets[j]
+		if ra, rb := socketSortRank(a.State), socketSortRank(b.State); ra != rb {
+			return ra < rb
+		}
 		if a.Address != b.Address {
 			return a.Address < b.Address
 		}
 		if a.Port != b.Port {
 			return a.Port < b.Port
 		}
-		return socketSortRank(a.State) < socketSortRank(b.State)
+		if a.RemoteAddress != b.RemoteAddress {
+			return a.RemoteAddress < b.RemoteAddress
+		}
+		return a.RemotePort < b.RemotePort
 	})
 }

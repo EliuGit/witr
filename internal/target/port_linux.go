@@ -6,13 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+
+	procpkg "github.com/pranshuparmar/witr/internal/proc"
 )
 
-func findSocketInodes(port int, listenersOnly bool) (map[string]bool, error) {
-	inodes := make(map[string]bool)
+// findSocketInodes returns the inodes of the sockets on port, each with the
+// uid that owns it.
+func findSocketInodes(port int, listenersOnly bool) (map[string]int, error) {
+	inodes := make(map[string]int)
 
 	type procNetFile struct {
 		path  string
@@ -71,7 +76,11 @@ func findSocketInodes(port int, listenersOnly bool) (map[string]bool, error) {
 				matches = remoteParts[1] == targetHex
 			}
 			if matches {
-				inodes[fields[9]] = true
+				uid, err := strconv.Atoi(fields[7])
+				if err != nil {
+					uid = -1
+				}
+				inodes[fields[9]] = uid
 			}
 		}
 	}
@@ -119,7 +128,7 @@ func ResolvePort(port int) ([]int, error) {
 
 			if rest, ok := strings.CutPrefix(link, "socket:["); ok {
 				inode, ok := strings.CutSuffix(rest, "]")
-				if ok && inodes[inode] {
+				if _, hit := inodes[inode]; ok && hit {
 					pidSet[pid] = true
 					break
 				}
@@ -137,8 +146,28 @@ func ResolvePort(port int) ([]int, error) {
 	sort.Ints(result)
 
 	if len(result) == 0 {
-		return nil, ErrSocketOwnerUnknown
+		return nil, ownerUnknownError(inodes)
 	}
 
 	return result, nil
+}
+
+// ownerUnknownError is ErrSocketOwnerUnknown naming the users the port's
+// sockets belong to: /proc/net records them even when the processes are
+// hidden from this user.
+func ownerUnknownError(inodes map[string]int) error {
+	var users []string
+	for _, uid := range inodes {
+		if uid < 0 {
+			continue
+		}
+		if name := procpkg.UserName(uid); !slices.Contains(users, name) {
+			users = append(users, name)
+		}
+	}
+	if len(users) == 0 {
+		return ErrSocketOwnerUnknown
+	}
+	slices.Sort(users)
+	return fmt.Errorf("%w; it belongs to %s", ErrSocketOwnerUnknown, strings.Join(users, ", "))
 }

@@ -51,7 +51,102 @@ var (
 	}
 )
 
+const (
+	// orphanedDescription explains an unknown source whose chain was cut
+	// where the process that started the target exited.
+	orphanedDescription = "The process that started it has exited; what remains above it only adopted it"
+	// adoptedByInitDescription qualifies an init source for such a chain.
+	adoptedByInitDescription = "Adopted by init after the process that started it exited"
+)
+
 func Detect(ancestry []model.Process) model.Source {
+	return forOrphan(detect(ancestry), ancestry)
+}
+
+// forOrphan adjusts src when the chain was cut where the process that started
+// the target exited, so the source doesn't credit what merely adopted it.
+func forOrphan(src model.Source, ancestry []model.Process) model.Source {
+	cut := parentExitedAt(ancestry)
+	switch {
+	case cut < 0:
+		return src
+	case src.Type == model.SourceInit:
+		// Without a richer service manager, daemons are routinely adopted by
+		// init, so keep init as the source but say it only adopted the process.
+		src.Description = adoptedByInitDescription
+		return src
+	case !explainsOrphan(src, ancestry[cut:]):
+		return model.Source{Type: model.SourceUnknown, Description: orphanDescription(ancestry, cut)}
+	}
+	return src
+}
+
+// orphanDescription explains an unknown source whose chain was cut where the
+// process that started the target exited. With nothing above the cut (Windows
+// doesn't reparent orphans), nothing adopted it either.
+func orphanDescription(ancestry []model.Process, cut int) string {
+	switch {
+	case cut > 0:
+		return orphanedDescription
+	case ancestry[0].PPID > 0:
+		return fmt.Sprintf("The process that started it (pid %d) has exited", ancestry[0].PPID)
+	}
+	return "The process that started it has exited"
+}
+
+// parentExitedAt returns the index of the last process in the chain whose
+// parent has exited, or -1 when the chain is intact.
+func parentExitedAt(ancestry []model.Process) int {
+	for i := len(ancestry) - 1; i >= 0; i-- {
+		if ancestry[i].ParentExited {
+			return i
+		}
+	}
+	return -1
+}
+
+// Untraced reports whether a source of type st leaves what started the
+// process unknown. Not on Windows: its ancestry routinely stops at a process
+// whose parent exited (Windows leaves a stale PPID instead of reparenting to
+// an init process), so an unknown source there is normal, not a finding.
+func Untraced(st model.SourceType) bool {
+	return st == model.SourceUnknown && runtime.GOOS != "windows"
+}
+
+// explainsOrphan reports whether src still names a real cause once the chain
+// is cut at an exited parent, since everything above the cut merely adopted
+// the process. Sources read from the process itself (its container, systemd
+// service, launchd job or rc service) still hold; sources found from its
+// ancestors only hold when found below the cut, the part of the chain that
+// actually started it.
+func explainsOrphan(src model.Source, below []model.Process) bool {
+	switch src.Type {
+	case model.SourceContainer:
+		return true
+	case model.SourceSystemd:
+		// A service, login session or app launch scope says where the process
+		// came from. init.scope (systemd itself, and every process under
+		// WSL) and the user manager only say what adopted it.
+		return src.Name != "" && src.Name != "init.scope" && !strings.HasPrefix(src.Name, "user@")
+	case model.SourceLaunchd:
+		return src.Name != "launchd"
+	case model.SourceBsdRc:
+		return src.Details["service"] != "" || src.UnitFile != ""
+	case model.SourceShell:
+		return detectShell(below) != nil
+	case model.SourceSSH:
+		return detectSSH(below) != nil
+	case model.SourceSupervisor:
+		return detectSupervisor(below) != nil
+	case model.SourceCron:
+		return detectCron(below) != nil
+	case model.SourceWindowsService:
+		return detectWindowsService(below) != nil
+	}
+	return false
+}
+
+func detect(ancestry []model.Process) model.Source {
 	// Detection order prioritizes platform-specific init systems
 	// over generic supervisor detection to avoid false positives
 	if src := detectContainer(ancestry); src != nil {
@@ -154,10 +249,15 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 
 	last := p[len(p)-1]
 
-	// Warn on a service that has restarted many times. restartCount is the real
-	// count from the service manager (e.g. systemd NRestarts), or 0 when unknown.
+	// Warn on a service or container that has restarted many times.
+	// restartCount is the real count from the service manager (e.g. systemd
+	// NRestarts) or the container runtime, or 0 when unknown.
 	if restartCount > 5 {
-		w = append(w, fmt.Sprintf("Service has restarted %d times", restartCount))
+		what := "Service"
+		if len(srcType) > 0 && srcType[0] == model.SourceContainer {
+			what = "Container"
+		}
+		w = append(w, fmt.Sprintf("%s has restarted %d times", what, restartCount))
 	}
 
 	// Health warnings
@@ -196,12 +296,12 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 	} else {
 		st = Detect(p).Type
 	}
-	// On Windows the ancestry frequently truncates at an orphaned process
-	// (Windows leaves a stale PPID instead of reparenting to an init process),
-	// so an unknown source is normal there — not a reliable "unsupervised"
-	// signal — and this warning would fire on most user processes.
-	if st == model.SourceUnknown && runtime.GOOS != "windows" {
-		w = append(w, "No known supervisor or service manager detected")
+	if Untraced(st) {
+		if parentExitedAt(p) >= 0 {
+			w = append(w, "Original parent process has exited, so what started this process can't be traced")
+		} else {
+			w = append(w, "No known supervisor or service manager detected")
+		}
 	}
 
 	// Warn if process is very old (>90 days). A zero start time means we
@@ -211,7 +311,9 @@ func Warnings(p []model.Process, restartCount int, srcType ...model.SourceType) 
 		w = append(w, "Process has been running for over 90 days")
 	}
 
-	if suspiciousDirs[last.WorkingDir] {
+	// A container's working directory is a path inside the container's own
+	// filesystem (usually "/"), so this host-path check doesn't apply.
+	if suspiciousDirs[last.WorkingDir] && last.ContainerID == "" {
 		w = append(w, "Process is running from a suspicious working directory: "+last.WorkingDir)
 	}
 

@@ -15,6 +15,12 @@ type AnalyzeConfig struct {
 	Verbose bool
 	Tree    bool
 	Target  model.Target
+	// Container, when already known, is the container the process runs in,
+	// sparing the runtime a second query.
+	Container *model.ContainerMatch
+	// SkipContainerDetails leaves out the container query for callers that
+	// don't show it, such as the TUI's frequently refreshed ancestry pane.
+	SkipContainerDetails bool
 }
 
 func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
@@ -50,10 +56,12 @@ func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
 		resolvedTarget = proc.Command
 	}
 
-	// Resolve the target container's healthcheck so the warning only fires when
-	// the runtime confirms none is configured.
-	if proc.ContainerID != "" {
-		hc := procpkg.ContainerHealthcheckStatus(proc.ContainerID, proc.ContainerRuntime)
+	// Resolve the target container's details and healthcheck; the warning only
+	// fires when the runtime confirms none is configured.
+	var container *model.ContainerMatch
+	if proc.ContainerID != "" && !cfg.SkipContainerDetails {
+		var hc string
+		container, hc = procpkg.ContainerDetails(proc.ContainerID, proc.ContainerRuntime, cfg.Container)
 		proc.ContainerHealthcheck = hc
 		if len(ancestry) > 0 {
 			ancestry[len(ancestry)-1].ContainerHealthcheck = hc
@@ -100,13 +108,18 @@ func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
 		fileCtx = procpkg.GetFileContext(cfg.PID)
 	}
 
+	// Restarts by the managing system: a systemd unit's NRestarts, or the
+	// container runtime's restart count.
 	restartCount := 0
-	if src.Type == model.SourceSystemd {
+	switch {
+	case src.Type == model.SourceSystemd:
 		if v, ok := src.Details["NRestarts"]; ok {
 			if count, err := strconv.Atoi(v); err == nil {
 				restartCount = count
 			}
 		}
+	case src.Type == model.SourceContainer && container != nil:
+		restartCount = container.RestartCount
 	}
 
 	res := model.Result{
@@ -117,6 +130,7 @@ func AnalyzePID(cfg AnalyzeConfig) (model.Result, error) {
 		Ancestry:        ancestry,
 		Source:          src,
 		Warnings:        source.Warnings(ancestry, restartCount, src.Type),
+		Container:       container,
 		ResourceContext: resCtx,
 		FileContext:     fileCtx,
 		Children:        childProcesses,

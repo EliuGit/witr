@@ -2,11 +2,31 @@ package target
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pranshuparmar/witr/pkg/model"
 )
+
+// addressOwnerPIDs picks the processes behind a port from its sockets grouped
+// by local address (FreeBSD's sockstat): the lowest PID of each address, since
+// a forking server's workers share its listener, and each process once, so one
+// process bound to both 127.0.0.1 and ::1 is a single owner. Several distinct
+// owners go to the caller's multiple-match handling, as on other platforms.
+func addressOwnerPIDs(addressToPIDs map[string][]int) []int {
+	var pids []int
+	for _, list := range addressToPIDs {
+		if len(list) == 0 {
+			continue
+		}
+		if pid := slices.Min(list); !slices.Contains(pids, pid) {
+			pids = append(pids, pid)
+		}
+	}
+	slices.Sort(pids)
+	return pids
+}
 
 // matchesExactToken checks whether name matches any token in the cmdline,
 // including path components. For example, "core24" matches the argument

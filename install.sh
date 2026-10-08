@@ -41,6 +41,9 @@ case "$ARCH" in
     aarch64|arm64)
         ARCH=arm64
         ;;
+    loongarch64|loong64)
+        ARCH=loong64
+        ;;
     *)
         echo "Unsupported architecture: $ARCH" >&2
         exit 1

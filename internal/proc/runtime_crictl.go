@@ -88,10 +88,15 @@ func (crictlRuntime) Enrich(match *model.ContainerMatch) {
 			match.StartedAt = t
 		}
 	}
+	// The kubelet starts a restarted container as a new attempt.
+	match.RestartCount = payload.Status.Metadata.Attempt
 }
 
 type crictlInspectPayload struct {
 	Status struct {
+		Metadata struct {
+			Attempt int `json:"attempt"`
+		} `json:"metadata"`
 		StartedAt string `json:"startedAt"`
 		Mounts    []struct {
 			ContainerPath string `json:"containerPath"`

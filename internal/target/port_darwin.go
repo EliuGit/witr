@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	procpkg "github.com/pranshuparmar/witr/internal/proc"
+	"github.com/pranshuparmar/witr/pkg/model"
 )
 
 func ResolvePort(port int) ([]int, error) {
@@ -59,47 +62,31 @@ func ResolvePort(port int) ([]int, error) {
 }
 
 func resolvePortNetstat(port int) ([]int, error) {
+	return netstatPortPIDs(procpkg.NetstatSockets(), port)
+}
+
+// netstatPortPIDs picks the processes behind port from netstat's sockets:
+// listening TCP and bound UDP sockets first, connected TCP sockets only when
+// nothing listens. A listener without an owner means the owner isn't visible.
+func netstatPortPIDs(socks []model.OpenPort, port int) ([]int, error) {
 	pidSet := make(map[int]bool)
 	fallbackSet := make(map[int]bool)
 	sawListenNoOwner := false
-	portStr := fmt.Sprintf(".%d", port)
 
-	// Check TCP: netstat -anv -p tcp
-	if out, err := exec.Command("netstat", "-anv", "-p", "tcp").Output(); err == nil {
-		for line := range strings.Lines(string(out)) {
-			fields := strings.Fields(line)
-			if len(fields) < 9 {
-				continue
-			}
-			// Local address may be in field 3 (IPv4) or 4 (IPv6 with -v); be lenient.
-			if !strings.HasSuffix(fields[3], portStr) && !(len(fields) > 4 && strings.HasSuffix(fields[4], portStr)) {
-				continue
-			}
-			isListen := strings.Contains(line, "LISTEN")
-			pid, err := strconv.Atoi(fields[8])
-			if err != nil || pid <= 0 {
-				if isListen {
-					sawListenNoOwner = true
-				}
-				continue
-			}
-			if isListen {
-				pidSet[pid] = true
-			} else {
-				fallbackSet[pid] = true
-			}
+	for _, s := range socks {
+		if s.Port != port {
+			continue
 		}
-	}
-
-	// Check UDP bound/connected sockets: netstat -anv -p udp (no LISTEN state).
-	if out, err := exec.Command("netstat", "-anv", "-p", "udp").Output(); err == nil {
-		for line := range strings.Lines(string(out)) {
-			fields := strings.Fields(line)
-			if len(fields) >= 9 && strings.HasSuffix(fields[3], portStr) {
-				if pid, err := strconv.Atoi(fields[8]); err == nil && pid > 0 {
-					pidSet[pid] = true
-				}
+		listening := s.Protocol == "UDP" || s.State == "LISTEN"
+		switch {
+		case s.PID <= 0:
+			if s.State == "LISTEN" {
+				sawListenNoOwner = true
 			}
+		case listening:
+			pidSet[s.PID] = true
+		default:
+			fallbackSet[s.PID] = true
 		}
 	}
 

@@ -1,0 +1,23 @@
+Target      : gunicorn
+
+Process     : gunicorn (pid 3141)
+User        : root
+Container   : docker: expense-manager-api-1 (id 7c41e0b9a2d3)
+Image       : expense-manager-api:1.4.2
+Published   : 0.0.0.0:8081->8080/tcp
+Compose File: /srv/expense-manager/docker-compose.yml
+Compose Dir : /srv/expense-manager
+Command     : /usr/local/bin/python /usr/local/bin/gunicorn app:app --bind 0.0.0.0:8080 --workers 2
+Started     : 5 days ago (Tue 2026-09-29 10:28:38 +00:00)
+Restarts    : 1 (policy: unless-stopped)
+
+Why It Exists :
+  systemd (pid 1) → containerd-shim (pid 3120) → gunicorn (pid 3141)
+
+Source      : docker (container)
+
+Working Dir : /app
+
+Warnings    :
+  • Process is running as root
+  • Container has no healthcheck configured

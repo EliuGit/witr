@@ -79,23 +79,38 @@ func enrichFromSystemd(src *model.Source, unitName string) {
 	defer conn.Close()
 
 	if unit, err := conn.GetUnitPropertiesContext(ctx, unitName); err == nil {
-		src.Description = stringProp(unit, "Description")
-		if fp := stringProp(unit, "FragmentPath"); fp != "" {
-			src.UnitFile = fp
-		} else if sp := stringProp(unit, "SourcePath"); sp != "" {
-			src.UnitFile = sp
-		}
+		applyUnitProperties(src, unitName, unit)
 	}
 
 	if strings.HasSuffix(unitName, ".service") {
 		if svc, err := conn.GetUnitTypePropertiesContext(ctx, unitName, "Service"); err == nil {
-			src.Details["NRestarts"] = strconv.FormatUint(uint64(uint32Prop(svc, "NRestarts")), 10)
+			src.Details["NRestarts"] = restartCount(svc)
 		}
 		timerUnit := strings.TrimSuffix(unitName, ".service") + ".timer"
 		if sched := timerSchedule(ctx, conn, timerUnit); sched != "" {
 			src.Details["schedule"] = sched
 		}
 	}
+}
+
+// applyUnitProperties takes a unit's description and file from its D-Bus
+// properties. A unit without a description reports its own name; that's
+// skipped. The unit's own file wins over the file it was generated from.
+func applyUnitProperties(src *model.Source, unitName string, unit map[string]interface{}) {
+	if desc := stringProp(unit, "Description"); desc != unitName {
+		src.Description = desc
+	}
+	if fp := stringProp(unit, "FragmentPath"); fp != "" {
+		src.UnitFile = fp
+	} else if sp := stringProp(unit, "SourcePath"); sp != "" {
+		src.UnitFile = sp
+	}
+}
+
+// restartCount is a service's NRestarts property, as the decimal string the
+// restart warning reads.
+func restartCount(svc map[string]interface{}) string {
+	return strconv.FormatUint(uint64(uint32Prop(svc, "NRestarts")), 10)
 }
 
 // timerSchedule renders a "<spec>, last: …, next: …" line for a .timer unit,

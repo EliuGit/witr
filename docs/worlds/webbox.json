@@ -8,7 +8,7 @@
   "distro": "Ubuntu 24.04.1 LTS",
   "arch": "x86_64",
   "memTotalBytes": 4294967296,
-  "description": "A small production box: an Nginx front-end, a PM2-managed Node app, Postgres, a Redis container, and a stuck apt lock.",
+  "description": "A small production box: an Nginx front-end, a PM2-managed Node app, Postgres, a Compose stack (an API and its Redis cache), a backup left running after its SSH session closed, and a stuck apt lock.",
   "processes": [
     {
       "pid": 1, "cpuPercent": 0.1, "memory": { "vms": 176160768, "rss": 13631488, "shared": 8388608 }, "ppid": 0, "command": "systemd", "cmdline": "/sbin/init",
@@ -52,7 +52,12 @@
     { "pid": 14233, "cpuPercent": 2.3, "ppid": 5034, "command": "node", "cmdline": "node /srv/expense-manager/index.js",
       "user": "deploy", "startedAgo": 172800,
       "workingDir": "/srv/expense-manager", "gitRepo": "expense-manager", "gitBranch": "main",
-      "sockets": [ { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "LISTEN" } ],
+      "sockets": [
+        { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "LISTEN" },
+        { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "ESTABLISHED", "remoteAddress": "127.0.0.1", "remotePort": 49822 },
+        { "address": "127.0.0.1", "port": 5000, "protocol": "TCP", "state": "ESTABLISHED", "remoteAddress": "127.0.0.1", "remotePort": 49836 },
+        { "address": "127.0.0.1", "port": 51744, "protocol": "TCP", "state": "ESTABLISHED", "remoteAddress": "127.0.0.1", "remotePort": 5432 }
+      ],
       "threadCount": 11, "fdCount": 34, "fdLimit": 1024,
       "memory": { "vms": 1198765568, "rss": 187650048, "shared": 41943040 },
       "io": { "readBytes": 15728640, "writeBytes": 4194304, "readOps": 2140, "writeOps": 512 },
@@ -89,7 +94,22 @@
     { "pid": 33871, "cpuPercent": 3.8, "memory": { "vms": 125829120, "rss": 60817408, "shared": 18874368 }, "ppid": 1, "command": "unattended-upgr", "cmdline": "/usr/bin/python3 /usr/bin/unattended-upgrade --download-only",
       "user": "root", "startedAgo": 240,
       "lockedFiles": ["/var/lib/dpkg/lock-frontend (WRITE)", "/var/lib/dpkg/lock (WRITE)"],
-      "source": { "type": "systemd", "name": "apt-daily-upgrade.service", "unitFile": "/lib/systemd/system/apt-daily-upgrade.service", "description": "Daily apt upgrade and clean activities" } }
+      "source": { "type": "systemd", "name": "apt-daily-upgrade.service", "unitFile": "/lib/systemd/system/apt-daily-upgrade.service", "description": "Daily apt upgrade and clean activities" } },
+
+    { "pid": 3120, "cpuPercent": 0.0, "memory": { "vms": 1252261888, "rss": 12582912, "shared": 8388608 }, "ppid": 1, "command": "containerd-shim", "cmdline": "/usr/bin/containerd-shim-runc-v2 -namespace moby -id 7c41e0b9a2d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9 -address /run/containerd/containerd.sock",
+      "user": "root", "startedAgo": 432000,
+      "source": { "type": "systemd", "name": "containerd.service", "unitFile": "/lib/systemd/system/containerd.service", "description": "containerd container runtime" } },
+    { "pid": 3141, "cpuPercent": 0.4, "memory": { "vms": 268435456, "rss": 88080384, "shared": 12582912 }, "ppid": 3120, "command": "gunicorn", "cmdline": "/usr/local/bin/python /usr/local/bin/gunicorn app:app --bind 0.0.0.0:8080 --workers 2",
+      "user": "root", "startedAgo": 432000, "workingDir": "/app",
+      "container": "docker: expense-manager-api-1", "containerId": "7c41e0b9a2d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9",
+      "warnings": ["Process is running as root", "Container has no healthcheck configured"],
+      "source": { "type": "container", "name": "docker" } },
+
+    { "pid": 27310, "cpuPercent": 6.2, "memory": { "vms": 25165824, "rss": 6291456, "shared": 3145728 }, "ppid": 1, "parentExited": true, "command": "rsync", "cmdline": "rsync -a --partial /srv/uploads/ backup@10.0.4.20:/backups/uploads/",
+      "user": "deploy", "startedAgo": 5400, "workingDir": "/home/deploy",
+      "source": { "type": "systemd", "name": "session-3.scope", "description": "Session 3 of User deploy" } },
+    { "pid": 27311, "cpuPercent": 1.1, "memory": { "vms": 16777216, "rss": 7340032, "shared": 5242880 }, "ppid": 27310, "command": "ssh", "cmdline": "ssh -l backup 10.0.4.20 rsync --server -logDtpre.iLsfxCIvu --partial . /backups/uploads/",
+      "user": "deploy", "startedAgo": 5400, "workingDir": "/home/deploy" }
   ],
   "containers": [
     {
@@ -102,7 +122,22 @@
       "ports": "127.0.0.1:6379->6379/tcp",
       "composeProject": "expense-manager", "composeService": "cache",
       "composeConfigFile": "/srv/expense-manager/docker-compose.yml",
-      "composeWorkingDir": "/srv/expense-manager"
+      "composeWorkingDir": "/srv/expense-manager",
+      "restartCount": 2, "restartPolicy": "always"
+    },
+    {
+      "runtime": "docker", "id": "7c41e0b9a2d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9",
+      "name": "expense-manager-api-1", "image": "expense-manager-api:1.4.2",
+      "command": "gunicorn app:app --bind 0.0.0.0:8080 --workers 2",
+      "state": "running", "status": "Up 5 days",
+      "createdAgo": 432060, "startedAgo": 432000,
+      "networks": "expense-manager_default",
+      "ports": "0.0.0.0:8081->8080/tcp",
+      "composeProject": "expense-manager", "composeService": "api",
+      "composeConfigFile": "/srv/expense-manager/docker-compose.yml",
+      "composeWorkingDir": "/srv/expense-manager",
+      "restartCount": 1, "restartPolicy": "unless-stopped",
+      "pid": 3141
     }
   ],
   "locks": [

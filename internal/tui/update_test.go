@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,12 +104,9 @@ func TestUpdateTogglesShowAllPorts(t *testing.T) {
 }
 
 func TestUpdateSlashFocusesFilter(t *testing.T) {
-	m, cmd := step(t, InitialModel("test"), keyRunes("/"))
+	m, _ := step(t, InitialModel("test"), keyRunes("/"))
 	if !m.input.Focused() {
 		t.Error("'/' should focus the process filter input")
-	}
-	if cmd == nil {
-		t.Error("'/' should return the cursor-blink command")
 	}
 
 	// Typing into the focused filter narrows the list.
@@ -280,4 +278,309 @@ func TestDetailKeyNavigation(t *testing.T) {
 			t.Errorf("tab should move focus to the env pane, got %v", m.detailFocus)
 		}
 	})
+}
+
+// actionModel returns a laid-out list view holding two processes.
+func actionModel(t *testing.T) MainModel {
+	t.Helper()
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.processes = []model.Process{{PID: 101, Command: "alpha"}, {PID: 202, Command: "bravo"}}
+	m.filterProcesses()
+	m.table.SetCursor(0)
+	return m
+}
+
+func TestListActionKeyOpensMenuForHighlightedProcess(t *testing.T) {
+	if !actionsSupported {
+		t.Skip("process actions are not supported on this platform")
+	}
+	m := actionModel(t)
+	m.table.SetCursor(1)
+	m, _ = step(t, m, keyRunes("a"))
+	if !m.actionMenuOpen || m.actionTarget == nil || m.actionTarget.PID != 202 {
+		t.Fatalf("a should open the menu for PID 202; open=%v target=%+v", m.actionMenuOpen, m.actionTarget)
+	}
+}
+
+func TestActionKeysTakePrecedence(t *testing.T) {
+	open := func() MainModel {
+		m := actionModel(t)
+		m.openActionMenu(m.filtered[0])
+		return m
+	}
+
+	t.Run("menu key picks the action, not a sort", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("t"))
+		if m.pendingAction != actionTerm || m.sortCol != "mem" {
+			t.Errorf("pendingAction=%v sortCol=%q, want actionTerm and unchanged sort", m.pendingAction, m.sortCol)
+		}
+	})
+
+	t.Run("tab-switch digits are ignored", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("2"))
+		if m.activeTab != tabProcesses || !m.actionMenuOpen {
+			t.Errorf("activeTab=%v menuOpen=%v, want the menu to stay open on the Processes tab", m.activeTab, m.actionMenuOpen)
+		}
+	})
+
+	t.Run("esc cancels instead of quitting", func(t *testing.T) {
+		m, _ := step(t, open(), tea.KeyMsg{Type: tea.KeyEsc})
+		if m.quitting || m.actionActive() || m.actionTarget != nil {
+			t.Errorf("quitting=%v active=%v target=%v, want the menu closed and the app running", m.quitting, m.actionActive(), m.actionTarget)
+		}
+	})
+
+	t.Run("n at the prompt declines instead of sorting", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("k"))
+		m, _ = step(t, m, keyRunes("n"))
+		if m.actionActive() || m.sortCol != "mem" {
+			t.Errorf("active=%v sortCol=%q, want the prompt declined and the sort unchanged", m.actionActive(), m.sortCol)
+		}
+	})
+
+	t.Run("renice input accepts tab-switch digits", func(t *testing.T) {
+		m, _ := step(t, open(), keyRunes("n"))
+		m, _ = step(t, m, keyRunes("1"))
+		m, _ = step(t, m, keyRunes("2"))
+		if got := m.reniceInput.Value(); got != "12" || m.activeTab != tabProcesses {
+			t.Errorf("renice input = %q on tab %v, want \"12\" on the Processes tab", got, m.activeTab)
+		}
+	})
+}
+
+func TestActionOpenPausesRefreshAndMouse(t *testing.T) {
+	m := actionModel(t)
+	m.openActionMenu(m.filtered[0])
+
+	old := time.Now().Add(-time.Hour)
+	m.lastRefresh = old
+	nm, _ := m.handleTick(tickMsg(time.Now()))
+	if !nm.(MainModel).lastRefresh.Equal(old) {
+		t.Error("the list must not refresh while an action menu is open")
+	}
+
+	// A click on the "2. Ports" tab would normally switch tabs.
+	m, _ = step(t, m, tea.MouseMsg{X: 25, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if m.activeTab != tabProcesses || !m.actionMenuOpen {
+		t.Errorf("activeTab=%v menuOpen=%v, want mouse input ignored while the menu is open", m.activeTab, m.actionMenuOpen)
+	}
+}
+
+func TestWithTargetsMatchExactlyAndListSkipped(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = m.withTargets([]model.Target{
+		{Type: model.TargetPort, Value: "80"},
+		{Type: model.TargetPort, Value: "443"},
+		{Type: model.TargetName, Value: "nginx"},
+	}, true)
+
+	// A seeded port matches exactly: not 8080, nor an fe80:: address.
+	m.ports = []model.OpenPort{
+		{Port: 80, Protocol: "tcp", Address: "0.0.0.0", State: "LISTEN"},
+		{Port: 8080, Protocol: "tcp", Address: "0.0.0.0", State: "LISTEN"},
+		{Port: 22, Protocol: "tcp", Address: "fe80::1", State: "LISTEN"},
+	}
+	m.updatePortTable()
+	if got := len(m.portTable.Rows()); got != 1 {
+		t.Errorf("port rows = %d, want only port 80", got)
+	}
+
+	// With -x, a seeded name matches the process name exactly.
+	m.processes = []model.Process{{PID: 1, Command: "nginx"}, {PID: 2, Command: "nginx-helper"}}
+	m.filterProcesses()
+	if len(m.filtered) != 1 || m.filtered[0].PID != 1 {
+		t.Errorf("filtered = %+v, want only the exact name match", m.filtered)
+	}
+
+	if !strings.Contains(m.statusMsg, "port 443") {
+		t.Errorf("status = %q, want the second port listed as not shown", m.statusMsg)
+	}
+}
+
+func manyProcesses(n int) []model.Process {
+	procs := make([]model.Process, n)
+	for i := range procs {
+		// Distinct memory keeps the default sort (memory, descending) in
+		// PID order.
+		procs[i] = model.Process{PID: i, Command: fmt.Sprintf("p%d", i), MemoryRSS: uint64(n-i) * 1024}
+	}
+	return procs
+}
+
+// `witr -i --pid N` shows N's row near the middle of the table, even when it
+// is far down the list.
+func TestInitialPIDIsScrolledIntoView(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = m.withTargets([]model.Target{{Type: model.TargetPID, Value: "250"}}, false)
+	nm, _ := m.handleProcessList(manyProcesses(400))
+	m = nm.(MainModel)
+
+	if row := m.table.SelectedRow(); len(row) == 0 || strings.TrimSpace(row[0]) != "250" {
+		t.Fatalf("selected row = %v, want PID 250", row)
+	}
+	var lines []string
+	for _, l := range strings.Split(m.table.View(), "\n")[1:] {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	at := -1
+	for i, l := range lines {
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "250" {
+			at = i
+		}
+	}
+	if at < len(lines)/4 || at > len(lines)*3/4 {
+		t.Errorf("PID 250 shows at line %d of %d, want it near the middle", at, len(lines))
+	}
+}
+
+// A refresh keeps PID 0 selected rather than jumping back to the top.
+func TestRefreshKeepsPIDZeroSelected(t *testing.T) {
+	m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+	procs := manyProcesses(50)
+	nm, _ := m.handleProcessList(procs)
+	m = nm.(MainModel)
+	for i, p := range m.filtered {
+		if p.PID == 0 {
+			m.table.SetCursor(i)
+		}
+	}
+	nm, _ = m.handleProcessList(procs)
+	m = nm.(MainModel)
+	if row := m.table.SelectedRow(); len(row) == 0 || strings.TrimSpace(row[0]) != "0" {
+		t.Errorf("after a refresh the selection is %v, want PID 0", row)
+	}
+}
+
+func TestWithTargetsSeedsInitialState(t *testing.T) {
+	t.Run("pid target selects that process on first list", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPID, Value: "2"}}, false)
+		if m.initialPID != 2 {
+			t.Fatalf("initialPID = %d, want 2", m.initialPID)
+		}
+		m, cmd := step(t, m, []model.Process{{PID: 1, Command: "a"}, {PID: 2, Command: "b"}, {PID: 3, Command: "c"}})
+		if got := m.table.Cursor(); got != 1 {
+			t.Errorf("cursor = %d, want 1 (row of pid 2)", got)
+		}
+		if cmd == nil {
+			t.Error("selecting the pid should fetch its tree")
+		}
+		if m.initialPID != 0 {
+			t.Errorf("initialPID should be cleared after first list, got %d", m.initialPID)
+		}
+	})
+
+	t.Run("name target pre-fills the process filter", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetName, Value: "nginx"}}, false)
+		m, _ = step(t, m, []model.Process{{PID: 1, Command: "nginx"}, {PID: 2, Command: "redis"}})
+		if len(m.filtered) != 1 || m.filtered[0].Command != "nginx" {
+			t.Errorf("name target should narrow to [nginx], got %v", m.filtered)
+		}
+	})
+
+	t.Run("port target opens the ports tab with the filter set", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetPort, Value: "5432"}}, false)
+		if m.activeTab != tabPorts {
+			t.Errorf("activeTab = %v, want tabPorts", m.activeTab)
+		}
+		if m.portInput.Value() != "5432" {
+			t.Errorf("port filter = %q, want \"5432\"", m.portInput.Value())
+		}
+		m, _ = step(t, m, []model.OpenPort{{Port: 5432, Protocol: "tcp", State: "LISTEN"}, {Port: 80, Protocol: "tcp", State: "LISTEN"}})
+		if rows := m.portTable.Rows(); len(rows) != 1 {
+			t.Errorf("port list should be narrowed to 1 row, got %d", len(rows))
+		}
+	})
+
+	t.Run("container target opens the containers tab with the filter set", func(t *testing.T) {
+		m := InitialModel("test").withTargets([]model.Target{{Type: model.TargetContainer, Value: "web"}}, false)
+		if m.activeTab != tabContainers || m.containerInput.Value() != "web" {
+			t.Errorf("activeTab = %v, filter = %q", m.activeTab, m.containerInput.Value())
+		}
+	})
+
+	t.Run("no targets leaves defaults", func(t *testing.T) {
+		m := InitialModel("test").withTargets(nil, false)
+		if m.activeTab != tabProcesses || m.initialPID != 0 || m.input.Value() != "" {
+			t.Errorf("unexpected seeded state: tab=%v pid=%d filter=%q", m.activeTab, m.initialPID, m.input.Value())
+		}
+	})
+}
+
+// Enter on a port's owner row opens it: a visible process by its PID (read
+// from the right-justified cell), and an owner that isn't visible ("-") through
+// the container publishing the port, as --port does.
+func TestPortsTabOpensOwner(t *testing.T) {
+	orig, origHidden := resolvePublishingContainer, ownersHidden
+	defer func() { resolvePublishingContainer, ownersHidden = orig, origHidden }()
+	ownersHidden = func() bool { return true }
+	var asked []any
+	resolvePublishingContainer = func(port int, proto string) *model.ContainerMatch {
+		asked = append(asked, port, proto)
+		return nil
+	}
+
+	setup := func(owner int) MainModel {
+		m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+		m.activeTab = tabPorts
+		m.processes = []model.Process{{PID: 4321, Command: "nginx", User: "root"}}
+		m.ports = []model.OpenPort{{Port: 18090, Protocol: "TCP6", Address: "::", State: "LISTEN", PID: owner}}
+		m.updatePortTable()
+		m.updatePortDetails()
+		m.listFocus = focusSide
+		return m
+	}
+
+	m := setup(4321)
+	if row := m.portDetailTable.SelectedRow(); len(row) == 0 || row[0] != "    4321" {
+		t.Fatalf("owner row = %q, want the right-justified PID", row)
+	}
+	m, cmd := step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.state != stateDetail || cmd == nil {
+		t.Errorf("Enter on a visible owner: state %v, cmd %v; want the detail view loading", m.state, cmd)
+	}
+
+	m = setup(0)
+	if row := m.portDetailTable.SelectedRow(); len(row) == 0 || strings.TrimSpace(row[0]) != "-" {
+		t.Fatalf("owner row = %q, want the not-visible row", row)
+	}
+	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.state != stateDetail || cmd == nil {
+		t.Fatalf("Enter on a hidden owner: state %v, cmd %v; want the container lookup", m.state, cmd)
+	}
+	msg := cmd()
+	if len(asked) != 2 || asked[0] != 18090 || asked[1] != "tcp" {
+		t.Errorf("container lookup asked %v, want port 18090 over tcp", asked)
+	}
+	if err, ok := msg.(error); !ok || !strings.Contains(err.Error(), "port 18090") {
+		t.Errorf("no publishing container: msg %v, want an error naming the port", msg)
+	}
+	m, _ = step(t, m, msg)
+	if m.state != stateList || !strings.Contains(m.statusMsg, "isn't visible") {
+		t.Errorf("after the lookup: state %v, status %q", m.state, m.statusMsg)
+	}
+}
+
+// The row of a hidden owner names the user its socket belongs to, and says how
+// to see the process when witr isn't running as root.
+func TestPortsTabHiddenOwnerRow(t *testing.T) {
+	orig := ownersHidden
+	defer func() { ownersHidden = orig }()
+	for _, hidden := range []bool{true, false} {
+		ownersHidden = func() bool { return hidden }
+		m, _ := step(t, InitialModel("test"), tea.WindowSizeMsg{Width: 160, Height: 40})
+		m.activeTab = tabPorts
+		m.ports = []model.OpenPort{{Port: 5432, Protocol: "TCP", Address: "127.0.0.1", State: "LISTEN", User: "postgres"}}
+		m.updatePortTable()
+		m.updatePortDetails()
+		row := m.portDetailTable.SelectedRow()
+		want := "owning process not visible"
+		if hidden {
+			want = "run witr with sudo to see it"
+		}
+		if len(row) != 4 || strings.TrimSpace(row[0]) != "-" || row[1] != "postgres" || row[3] != want {
+			t.Errorf("hidden=%v: row %q, want user postgres and %q", hidden, row, want)
+		}
+	}
 }

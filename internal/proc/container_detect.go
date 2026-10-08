@@ -54,6 +54,14 @@ func detectContainerFromCmdline(cmdline string) string {
 			return "containerd: " + name
 		}
 		return "containerd"
+	case strings.Contains(lowerCmd, "container-runtime-linux"), strings.Contains(lowerCmd, "apple.container"):
+		// Apple container runs one container-runtime-linux helper per
+		// container, started with `start --root <dir> --uuid <id>`; the ID is
+		// also the container's name.
+		if id := extractFlagValue(cmdline, "--uuid"); id != "" {
+			return "container: " + id
+		}
+		return "container"
 	}
 
 	return ""

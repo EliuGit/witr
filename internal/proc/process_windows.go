@@ -10,6 +10,15 @@ import (
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
+// imageName returns the executable name of pid, or "".
+func imageName(pid int) string {
+	_, exe, err := getInfoFromSnapshot(pid)
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(exe)
+}
+
 func ReadProcess(pid int) (model.Process, error) {
 	// PID 0 is the System Idle Process on Windows (and negative PIDs are never
 	// valid), so reject them rather than returning the idle pseudo-process —
@@ -17,9 +26,14 @@ func ReadProcess(pid int) (model.Process, error) {
 	if pid <= 0 {
 		return model.Process{}, fmt.Errorf("invalid pid %d", pid)
 	}
+	if processExited(pid) {
+		return model.Process{}, fmt.Errorf("process %d does not exist (it has exited)", pid)
+	}
+	// A process that can't be opened still comes back from the system
+	// snapshot, so failing here means it isn't running.
 	info, err := GetProcessDetailedInfo(pid)
 	if err != nil {
-		return model.Process{}, err
+		return model.Process{}, fmt.Errorf("process %d does not exist", pid)
 	}
 
 	name := ""
@@ -36,28 +50,30 @@ func ReadProcess(pid int) (model.Process, error) {
 	// figure shown in the verbose report (ResourceContext) so every output mode
 	// reports the same value.
 	rss, cpu, cpuTime, _ := windowsProcMetrics(pid)
+	user, integrity := readTokenInfo(pid)
 
 	return model.Process{
-		PID:           pid,
-		PPID:          info.PPID,
-		Command:       name,
-		Cmdline:       info.CommandLine,
-		Exe:           info.Exe,
-		StartedAt:     info.StartedAt,
-		User:          readUser(pid),
-		CPUPercent:    cpu,
-		MemoryRSS:     rss,
-		MemoryPercent: windowsMemoryPercent(rss),
-		WorkingDir:    info.Cwd,
-		GitRepo:       gitRepo,
-		GitBranch:     gitBranch,
-		Sockets:       procSockets,
-		Health:        windowsHealth(rss, cpuTime),
-		Forked:        "unknown",
-		Env:           info.Env,
-		Service:       serviceName,
-		Container:     container,
-		ExeDeleted:    isWindowsBinaryDeleted(info.Exe),
+		PID:            pid,
+		PPID:           info.PPID,
+		Command:        name,
+		Cmdline:        info.CommandLine,
+		Exe:            info.Exe,
+		StartedAt:      info.StartedAt,
+		User:           user,
+		IntegrityLevel: integrity,
+		CPUPercent:     cpu,
+		MemoryRSS:      rss,
+		MemoryPercent:  windowsMemoryPercent(rss),
+		WorkingDir:     info.Cwd,
+		GitRepo:        gitRepo,
+		GitBranch:      gitBranch,
+		Sockets:        procSockets,
+		Health:         windowsHealth(rss, cpuTime),
+		Forked:         "unknown",
+		Env:            info.Env,
+		Service:        serviceName,
+		Container:      container,
+		ExeDeleted:     isWindowsBinaryDeleted(info.Exe),
 	}, nil
 }
 

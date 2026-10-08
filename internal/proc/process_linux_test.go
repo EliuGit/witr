@@ -34,6 +34,52 @@ func TestProcessState(t *testing.T) {
 	}
 }
 
+func TestFullContainerID(t *testing.T) {
+	t.Parallel()
+
+	const id = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name   string
+		cgroup string
+		want   string
+	}{
+		{"podman container", "0::/machine.slice/libpod-" + id + ".scope", id},
+		{"podman's conmon monitor", "0::/machine.slice/libpod-conmon-" + id + ".scope", ""},
+		{"truncated ID", "0::/machine.slice/libpod-abc123.scope", ""},
+	}
+	for _, tt := range tests {
+		if got := fullContainerID(tt.cgroup, "libpod-", "libpod/"); got != tt.want {
+			t.Errorf("%s: fullContainerID(%q) = %q, want %q", tt.name, tt.cgroup, got, tt.want)
+		}
+	}
+}
+
+func TestContainerdCgroupID(t *testing.T) {
+	t.Parallel()
+
+	const id = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name   string
+		cgroup string
+		want   string
+	}{
+		{"cgroupfs driver, default namespace", "0::/default/" + id, id},
+		{"cgroupfs driver, nested cgroup", "0::/default/" + id + "/init.scope", id},
+		{"cgroupfs driver, cgroup v1", "12:pids:/default/" + id + "\n11:memory:/default/" + id, id},
+		{"systemd driver", "0::/system.slice/nerdctl-" + id + ".scope", id},
+		{"rootless systemd driver", "0::/user.slice/user-1000.slice/user@1000.service/user.slice/nerdctl-" + id + ".scope", id},
+		{"containerd daemon and shims", "0::/system.slice/containerd.service", ""},
+		{"docker container scope", "0::/system.slice/docker-" + id + ".scope", ""},
+		{"kubernetes pod", "0::/kubepods/burstable/pod1234/" + id, ""},
+		{"user session", "0::/user.slice/user-1000.slice/session-2.scope", ""},
+	}
+	for _, tt := range tests {
+		if got := containerdCgroupID(tt.cgroup); got != tt.want {
+			t.Errorf("%s: containerdCgroupID(%q) = %q, want %q", tt.name, tt.cgroup, got, tt.want)
+		}
+	}
+}
+
 func TestExtractContainerID(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +123,13 @@ func TestExtractContainerID(t *testing.T) {
 		{
 			name:        "slash-prefix path with too-short remainder returns empty",
 			cgroup:      "0::/docker/shortid",
+			dashPrefix:  "docker-",
+			slashPrefix: "docker/",
+			want:        "",
+		},
+		{
+			name:        "docker.service daemon cgroup has no container ID",
+			cgroup:      "0::/system.slice/docker.service",
 			dashPrefix:  "docker-",
 			slashPrefix: "docker/",
 			want:        "",

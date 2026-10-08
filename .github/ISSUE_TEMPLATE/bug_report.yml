@@ -41,7 +41,7 @@ body:
     id: arch
     attributes:
       label: Architecture
-      description: e.g. amd64, arm64
+      description: e.g. amd64, arm64, loong64
       placeholder: amd64
   - type: textarea
     id: context

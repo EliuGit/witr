@@ -2,11 +2,11 @@ package tui
 
 import (
 	"fmt"
-	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -35,12 +35,18 @@ var (
 			Foreground(colorAccent).
 			Bold(true)
 
+	placeholderStyle = lipgloss.NewStyle().Foreground(colorMuted).Faint(basicColors)
+
+	// The layout reserves one line for the footer: text that doesn't fit is
+	// cut rather than wrapped onto a second line.
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
+			Faint(basicColors).
 			Border(lipgloss.NormalBorder(), true, false, false, false).
 			BorderForeground(colorBorderDim).
 			Padding(0, 1).
-			Width(100)
+			Width(100).
+			MaxHeight(2)
 
 	activeTabStyle = lipgloss.NewStyle().
 			Foreground(colorOnAccent).
@@ -64,6 +70,13 @@ var (
 	confirmStyle = lipgloss.NewStyle().
 			Foreground(colorConfirm).
 			Bold(true)
+
+	// Matches the selected table row: it names the process an action targets.
+	actionTargetStyle = lipgloss.NewStyle().
+				Foreground(colorSelectFg).
+				Background(colorSelectBg).
+				Reverse(basicColors).
+				Padding(0, 1)
 
 	pidStyle = lipgloss.NewStyle().
 			Background(colorGreenBg).
@@ -93,6 +106,7 @@ var (
 		s.Selected = s.Selected.
 			Foreground(colorSelectFg).
 			Background(colorSelectBg).
+			Reverse(basicColors).
 			Bold(false)
 		return s
 	}()
@@ -137,7 +151,7 @@ const (
 type MainModel struct {
 	state              modelState
 	table              table.Model
-	input              textinput.Model
+	input              textInput
 	viewport           viewport.Model
 	treeViewport       viewport.Model
 	envViewport        viewport.Model
@@ -149,15 +163,15 @@ type MainModel struct {
 	activeTab          tab
 	portTable          table.Model
 	portDetailTable    table.Model
-	portInput          textinput.Model
+	portInput          textInput
 	ports              []model.OpenPort
 	containerTable     table.Model
-	containerInput     textinput.Model
+	containerInput     textInput
 	containers         []*model.ContainerMatch
 	filteredContainers []*model.ContainerMatch
 	selectedContainer  *model.ContainerMatch
 	lockTable          table.Model
-	lockInput          textinput.Model
+	lockInput          textInput
 	locks              []*model.LockedFile
 	filteredLocks      []*model.LockedFile
 	statusMsg          string // transient status/error message shown in status line
@@ -195,17 +209,30 @@ type MainModel struct {
 	slowStreak       int
 	fastStreak       int
 
-	// Ancestry navigation in the side panel
+	// Ancestry navigation in the side panel. treeRows maps each tree line
+	// below the label to its treePIDs index, or -1 for a line that isn't a
+	// process.
 	treePIDs      []int
+	treeRows      []int
 	treeCursor    int
 	treeResult    *model.Result
 	treeAncestry  []model.Process
 	treeTargetPID int
 
-	// Process action state
+	// Process action state. actionTarget is captured when the menu opens, so
+	// the action hits that process even if the list re-sorts underneath.
 	actionMenuOpen bool
 	pendingAction  actionKind
-	reniceInput    textinput.Model
+	actionTarget   *model.Process
+	reniceInput    textInput
+
+	// PID to select once the first process list arrives
+	initialPID int
+
+	// exactName and exactPort make filters seeded from CLI targets match
+	// exactly (names with -x, ports always) until the user edits them.
+	exactName bool
+	exactPort bool
 }
 
 func InitialModel(version string) MainModel {
@@ -213,7 +240,7 @@ func InitialModel(version string) MainModel {
 		{Title: "PID", Width: 8},
 		{Title: "User", Width: 12},
 		{Title: "Name", Width: 20},
-		{Title: "CPU%", Width: 6},
+		{Title: "Avg CPU", Width: 9},
 		{Title: "Mem", Width: 16},
 		{Title: "Started", Width: 19},
 		{Title: "Command", Width: 50},
@@ -285,37 +312,10 @@ func InitialModel(version string) MainModel {
 	)
 	lt.SetStyles(s)
 
-	li := textinput.New()
-	li.Placeholder = "Search PID, Process, Type, Mode, Path..."
-	li.CharLimit = 156
-	li.Width = 50
-	li.Prompt = "> "
-	li.PromptStyle = promptStyle
-	li.Blur()
-
-	ci := textinput.New()
-	ci.Placeholder = "Search ID, Name, Runtime, Image, Status, Ports, Command..."
-	ci.CharLimit = 156
-	ci.Width = 50
-	ci.Prompt = "> "
-	ci.PromptStyle = promptStyle
-	ci.Blur()
-
-	ti := textinput.New()
-	ti.Placeholder = "Search PID, Name, User, Command..."
-	ti.CharLimit = 156
-	ti.Width = 50
-	ti.Prompt = "> "
-	ti.PromptStyle = promptStyle
-	ti.Blur()
-
-	pi := textinput.New()
-	pi.Placeholder = "Search Port, Protocol, Address, State..."
-	pi.CharLimit = 156
-	pi.Width = 50
-	pi.Prompt = "> "
-	pi.PromptStyle = promptStyle
-	pi.Blur()
+	li := newTextInput("Search PID, Process, Type, Mode, Path...", 156, 50)
+	ci := newTextInput("Search ID, Name, Runtime, Image, Status, Ports, Command...", 156, 50)
+	ti := newTextInput("Search PID, Name, User, Command...", 156, 50)
+	pi := newTextInput("Search Port, Protocol, Address, State...", 156, 50)
 
 	vp := viewport.New(0, 0)
 	vp.YPosition = 0
@@ -326,11 +326,9 @@ func InitialModel(version string) MainModel {
 	evp := viewport.New(0, 0)
 	evp.YPosition = 0
 
-	ri := textinput.New()
-	ri.Placeholder = "−20…19"
-	ri.CharLimit = 4
-	ri.Width = 8
-	ri.Blur()
+	// The renice prompt follows the confirmation text, so its "> " is plain.
+	ri := newTextInput("−20…19", 4, 8)
+	ri.PromptStyle = lipgloss.NewStyle()
 
 	return MainModel{
 		state:             stateList,
@@ -363,23 +361,79 @@ func InitialModel(version string) MainModel {
 	}
 }
 
-func Start(version string) error {
-	if os.Getenv("COLORTERM") == "" {
-		os.Setenv("COLORTERM", "truecolor") //nolint:errcheck
-	}
+func Start(version string, targets []model.Target, exact bool) error {
+	lipgloss.SetColorProfile(lipglossProfile(colorProfile))
 
-	p := tea.NewProgram(InitialModel(version), tea.WithAltScreen())
+	p := tea.NewProgram(InitialModel(version).withTargets(targets, exact), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("error running tui: %w", err)
 	}
 	return nil
 }
 
+// withTargets seeds the initial tab, filter and selection from the CLI
+// targets so `witr -i` opens where a non-interactive run would have looked.
+// The TUI shows one target of each type; any others are listed in the status
+// line rather than dropped silently.
+func (m MainModel) withTargets(targets []model.Target, exact bool) MainModel {
+	var skipped []string
+	for _, t := range targets {
+		used := false
+		switch t.Type {
+		case model.TargetPID:
+			if pid, err := strconv.Atoi(t.Value); err == nil && m.initialPID == 0 {
+				m.initialPID = pid
+				used = true
+			}
+		case model.TargetName:
+			if m.input.Value() == "" {
+				m.input.SetValue(t.Value)
+				m.exactName = exact
+				used = true
+			}
+		case model.TargetPort:
+			if m.portInput.Value() == "" {
+				m.portInput.SetValue(t.Value)
+				m.exactPort = true
+				m.activeTab = tabPorts
+				used = true
+			}
+		case model.TargetContainer:
+			if m.containerInput.Value() == "" {
+				m.containerInput.SetValue(t.Value)
+				m.activeTab = tabContainers
+				used = true
+			}
+		case model.TargetFile:
+			if locksTabEnabled && m.lockInput.Value() == "" {
+				m.lockInput.SetValue(t.Value)
+				m.activeTab = tabLocks
+				used = true
+			}
+		}
+		if !used {
+			skipped = append(skipped, string(t.Type)+" "+t.Value)
+		}
+	}
+	if len(skipped) > 0 {
+		m.statusMsg = "Interactive mode shows one target of each type; not shown: " + strings.Join(skipped, ", ")
+	}
+	return m
+}
+
 func (m MainModel) Init() tea.Cmd {
-	return tea.Batch(
-		textinput.Blink,
+	cmds := []tea.Cmd{
 		m.refreshProcesses(),
 		waitTick(),
 		tea.EnableMouseCellMotion,
-	)
+	}
+	switch m.activeTab {
+	case tabPorts:
+		cmds = append(cmds, m.refreshPorts())
+	case tabContainers:
+		cmds = append(cmds, m.refreshContainers())
+	case tabLocks:
+		cmds = append(cmds, m.refreshLocks())
+	}
+	return tea.Batch(cmds...)
 }

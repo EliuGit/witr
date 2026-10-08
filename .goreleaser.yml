@@ -6,14 +6,18 @@ builds:
   - id: witr
     main: ./cmd/witr
     binary: witr
-    goos:
-      - linux
-      - darwin
-      - freebsd
-      - windows
-    goarch:
-      - amd64
-      - arm64
+    # Explicit target list: loong64 is a Linux-only architecture, so it must
+    # not be added to the shared goarch list (that would try darwin/loong64 etc.).
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - linux_loong64
+      - darwin_amd64
+      - darwin_arm64
+      - freebsd_amd64
+      - freebsd_arm64
+      - windows_amd64
+      - windows_arm64
     env:
       - CGO_ENABLED=0
     flags:
@@ -64,4 +68,3 @@ changelog:
 release:
   extra_files:
     - glob: docs/cli/witr.1
-

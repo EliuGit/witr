@@ -1,0 +1,19 @@
+[94mTarget[0m      : container expense-manager-cache-1
+
+[94mContainer[0m   : [92mexpense-manager-cache-1[0m ([90mid 3f9a1c2b7d4e[0m) [92m[healthy][0m
+[94mImage[0m       : redis:7-alpine
+[94mCompose File[0m: /srv/expense-manager/docker-compose.yml
+[94mCompose Dir[0m : /srv/expense-manager
+[94mCommand[0m     : docker-entrypoint.sh redis-server --appendonly yes
+[95mStarted[0m     : 5 days ago (Tue 2026-09-29 10:28:38 +00:00)
+[94mCreated[0m     : Tue 2026-09-29 10:18:38 +00:00
+[95mRestarts[0m    : 2 (policy: always)
+[94mNetwork[0m     : expense-manager_default
+
+[95mWhy It Exists[0m :
+  docker [95m→[0m expense-manager (docker-compose) [95m→[0m [92mexpense-manager-cache-1[0m
+
+[96mSource[0m      : docker-compose: expense-manager/cache
+[92mSockets[0m     : 127.0.0.1:6379->6379/tcp
+
+[93mNote[0m        : The owning process is not visible in this environment.

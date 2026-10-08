@@ -1,9 +1,9 @@
 package output
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/pranshuparmar/witr/pkg/model"
@@ -81,7 +81,49 @@ func FormatContainerLine(match *model.ContainerMatch) string {
 	return parts
 }
 
+// RenderContainerFallback renders a container whose owning process witr
+// can't see from here.
 func RenderContainerFallback(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool) {
+	renderContainerView(w, targetLabel, match, colorEnabled, verbose, "The owning process is not visible in this environment.")
+}
+
+// RenderProxiedContainer renders the container behind a port that host
+// processes publish for it, with note (from PublishedNote) naming them.
+func RenderProxiedContainer(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, note string) {
+	renderContainerView(w, targetLabel, match, colorEnabled, verbose, note)
+}
+
+// PublishedNote explains a container view reached through the host processes
+// that publish its port (docker-proxy, Docker Desktop): they are visible, the
+// container's own processes are not. names[i] is the name of pids[i].
+func PublishedNote(names []string, pids []int) string {
+	type group struct {
+		name string
+		pids []string
+	}
+	var groups []*group
+	byName := map[string]*group{}
+	for i, pid := range pids {
+		g := byName[names[i]]
+		if g == nil {
+			g = &group{name: names[i]}
+			byName[names[i]] = g
+			groups = append(groups, g)
+		}
+		g.pids = append(g.pids, strconv.Itoa(pid))
+	}
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		label := "pid"
+		if len(g.pids) > 1 {
+			label = "pids"
+		}
+		parts[i] = fmt.Sprintf("%s (%s %s)", SanitizeTerminalLine(g.name), label, strings.Join(g.pids, ", "))
+	}
+	return fmt.Sprintf("Published on the host by %s; the container's own processes are not visible from here.", strings.Join(parts, ", "))
+}
+
+func renderContainerView(w io.Writer, targetLabel string, match *model.ContainerMatch, colorEnabled bool, verbose bool, note string) {
 	out := NewPrinter(w)
 
 	name := SanitizeTerminalLine(match.Name)
@@ -126,6 +168,7 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 			out.Printf("Image       : %s\n", image)
 		}
 	}
+	printComposeOrigin(out, match, colorEnabled)
 
 	if command != "" {
 		if colorEnabled {
@@ -149,6 +192,13 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 			out.Printf("%sCreated%s     : %s\n", ColorBlue, ColorReset, dtStr)
 		} else {
 			out.Printf("Created     : %s\n", dtStr)
+		}
+	}
+	if v := restartsValue(match.RestartCount, match.RestartPolicy); v != "" {
+		if colorEnabled {
+			out.Printf("%sRestarts%s    : %s\n", ColorMagenta, ColorReset, v)
+		} else {
+			out.Printf("Restarts    : %s\n", v)
 		}
 	}
 
@@ -188,26 +238,46 @@ func RenderContainerFallback(w io.Writer, targetLabel string, match *model.Conta
 				out.Printf("\nMounts      : %s\n", mounts)
 			}
 		}
-		if match.ComposeConfigFile != "" {
-			if colorEnabled {
-				out.Printf("%sCompose File%s: %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeConfigFile))
-			} else {
-				out.Printf("Compose File: %s\n", SanitizeTerminal(match.ComposeConfigFile))
-			}
-		}
-		if match.ComposeWorkingDir != "" {
-			if colorEnabled {
-				out.Printf("%sCompose Dir%s : %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeWorkingDir))
-			} else {
-				out.Printf("Compose Dir : %s\n", SanitizeTerminal(match.ComposeWorkingDir))
-			}
-		}
 	}
 
 	if colorEnabled {
-		out.Printf("\n%sNote%s        : The owning process is not visible in this environment.\n", ColorDimYellow, ColorReset)
+		out.Printf("\n%sNote%s        : %s\n", ColorDimYellow, ColorReset, note)
 	} else {
-		out.Printf("\nNote        : The owning process is not visible in this environment.\n")
+		out.Printf("\nNote        : %s\n", note)
+	}
+}
+
+// restartsValue renders a restart count, with a container's restart policy
+// when it has one, or "" when there is nothing to say.
+func restartsValue(count int, policy string) string {
+	if policy == "no" {
+		policy = ""
+	}
+	switch {
+	case policy != "":
+		return fmt.Sprintf("%d (policy: %s)", count, SanitizeTerminalLine(policy))
+	case count > 0:
+		return strconv.Itoa(count)
+	}
+	return ""
+}
+
+// printComposeOrigin prints where a Compose-managed container was defined on
+// the host: its Compose file and project directory.
+func printComposeOrigin(out Printer, match *model.ContainerMatch, colorEnabled bool) {
+	if match.ComposeConfigFile != "" {
+		if colorEnabled {
+			out.Printf("%sCompose File%s: %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeConfigFile))
+		} else {
+			out.Printf("Compose File: %s\n", SanitizeTerminal(match.ComposeConfigFile))
+		}
+	}
+	if match.ComposeWorkingDir != "" {
+		if colorEnabled {
+			out.Printf("%sCompose Dir%s : %s\n", ColorBlue, ColorReset, SanitizeTerminal(match.ComposeWorkingDir))
+		} else {
+			out.Printf("Compose Dir : %s\n", SanitizeTerminal(match.ComposeWorkingDir))
+		}
 	}
 }
 
@@ -285,7 +355,9 @@ func writeContainerChainInline(out Printer, segs []string, colorEnabled bool) {
 	}
 }
 
-func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (string, error) {
+// ContainerFallbackToJSON renders the container view as JSON. note, when
+// set, are the docker-proxy processes that publish the target port.
+func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch, note string) (string, error) {
 	type containerResult struct {
 		Target            string
 		Runtime           string
@@ -296,6 +368,8 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (s
 		State             string `json:",omitempty"`
 		Status            string `json:",omitempty"`
 		Health            string `json:",omitempty"`
+		RestartCount      int    `json:",omitempty"`
+		RestartPolicy     string `json:",omitempty"`
 		CreatedAt         string `json:",omitempty"`
 		StartedAt         string `json:",omitempty"`
 		Networks          string `json:",omitempty"`
@@ -312,11 +386,11 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (s
 
 	created := ""
 	if !match.CreatedAt.IsZero() {
-		created = match.CreatedAt.Format("Mon 2006-01-02 15:04:05 -07:00")
+		created = match.CreatedAt.Local().Format("Mon 2006-01-02 15:04:05 -07:00")
 	}
 	started := ""
 	if !match.StartedAt.IsZero() {
-		started = match.StartedAt.Format("Mon 2006-01-02 15:04:05 -07:00")
+		started = match.StartedAt.Local().Format("Mon 2006-01-02 15:04:05 -07:00")
 	}
 
 	res := containerResult{
@@ -329,6 +403,8 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (s
 		State:             match.State,
 		Status:            match.Status,
 		Health:            match.Health,
+		RestartCount:      match.RestartCount,
+		RestartPolicy:     match.RestartPolicy,
 		CreatedAt:         created,
 		StartedAt:         started,
 		Networks:          match.Networks,
@@ -342,10 +418,9 @@ func ContainerFallbackToJSON(targetLabel string, match *model.ContainerMatch) (s
 		Chain:             containerChain(match),
 		Note:              "The owning process is not visible in this environment. This is common when the runtime runs in a separate namespace (e.g., Docker Desktop, WSL2 distro, macOS VM).",
 	}
-
-	data, err := json.MarshalIndent(res, "", "  ")
-	if err != nil {
-		return "", err
+	if note != "" {
+		res.Note = note
 	}
-	return string(data), nil
+
+	return MarshalJSON(res)
 }

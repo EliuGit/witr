@@ -2,6 +2,7 @@ package source
 
 import (
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -17,12 +18,12 @@ func detectContainer(ancestry []model.Process) *model.Source {
 		content := string(data)
 
 		switch {
-		case strings.Contains(content, "docker"):
+		case isContainerCgroup(content, "docker"):
 			return &model.Source{
 				Type: model.SourceContainer,
 				Name: "docker",
 			}
-		case strings.Contains(content, "podman"), strings.Contains(content, "libpod"):
+		case isContainerCgroup(content, "podman", "libpod"):
 			return &model.Source{
 				Type: model.SourceContainer,
 				Name: "podman",
@@ -37,7 +38,9 @@ func detectContainer(ancestry []model.Process) *model.Source {
 				Type: model.SourceContainer,
 				Name: "colima",
 			}
-		case strings.Contains(content, "containerd"):
+		// Containers started directly through containerd (nerdctl) have
+		// cgroups that never name it; the process reader recognises them.
+		case isContainerCgroup(content, "containerd"), p.ContainerRuntime == "nerdctl":
 			return &model.Source{
 				Type: model.SourceContainer,
 				Name: "containerd",
@@ -70,6 +73,26 @@ func detectContainer(ancestry []model.Process) *model.Source {
 	}
 
 	return nil
+}
+
+var containerIDPattern = regexp.MustCompile("[0-9a-f]{64}")
+
+// isContainerCgroup reports whether cgroup content belongs to a container of
+// the runtime named by one of markers. The runtime's own service
+// (docker.service, podman.service, containerd.service) names it too, but holds
+// its daemons and helpers (dockerd, docker-proxy, containerd-shim); only a
+// container's cgroup carries its ID.
+func isContainerCgroup(content string, markers ...string) bool {
+	// Podman's conmon monitor sits in libpod-conmon-<id>.scope, on the host.
+	if !containerIDPattern.MatchString(content) || strings.Contains(content, "-conmon-") {
+		return false
+	}
+	for _, m := range markers {
+		if strings.Contains(content, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func itoa(n int) string {

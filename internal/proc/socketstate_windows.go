@@ -3,51 +3,29 @@
 package proc
 
 import (
-	"fmt"
-	"os/exec"
-	"strings"
-
 	"github.com/pranshuparmar/witr/pkg/model"
 )
 
+// GetSocketStateForPort returns the most relevant TCP socket state for a port.
 func GetSocketStateForPort(port int) *model.SocketInfo {
-	// netstat -ano
-	out, err := exec.Command("netstat", "-ano").Output()
+	socks, err := ListSockets()
 	if err != nil {
 		return nil
 	}
 
-	lines := strings.Split(string(out), "\n")
-	portStr := fmt.Sprintf(":%d", port)
-
 	var states []model.SocketInfo
-
-	for _, line := range lines {
-		if strings.Contains(line, portStr) {
-			fields := strings.Fields(line)
-			if len(fields) < 4 {
-				continue
-			}
-			// Proto Local Address Foreign Address State PID
-			// TCP 0.0.0.0:135 0.0.0.0:0 LISTENING 888
-
-			localAddr := fields[1]
-			if !strings.HasSuffix(localAddr, portStr) {
-				continue
-			}
-
-			state := fields[3]
-			remoteAddr := fields[2]
-
-			info := model.SocketInfo{
-				Port:       port,
-				State:      state,
-				LocalAddr:  localAddr,
-				RemoteAddr: remoteAddr,
-			}
-			addStateExplanation(&info)
-			states = append(states, info)
+	for _, s := range socks {
+		if s.Protocol != "TCP" || s.LocalPort != port {
+			continue
 		}
+		info := model.SocketInfo{
+			Port:       port,
+			State:      s.State,
+			LocalAddr:  s.LocalIP,
+			RemoteAddr: s.RemoteIP,
+		}
+		addStateExplanation(&info)
+		states = append(states, info)
 	}
 
 	if len(states) == 0 {
@@ -63,7 +41,7 @@ func GetSocketStateForPort(port int) *model.SocketInfo {
 
 	// Return LISTEN
 	for _, s := range states {
-		if s.State == "LISTENING" { // Windows uses LISTENING
+		if s.State == "LISTEN" {
 			return &s
 		}
 	}
@@ -73,7 +51,7 @@ func GetSocketStateForPort(port int) *model.SocketInfo {
 
 func addStateExplanation(info *model.SocketInfo) {
 	switch info.State {
-	case "LISTENING":
+	case "LISTEN":
 		info.Explanation = "Actively listening for connections"
 	case "TIME_WAIT":
 		info.Explanation = "Connection closed, waiting for delayed packets"
@@ -86,7 +64,7 @@ func addStateExplanation(info *model.SocketInfo) {
 	case "SYN_SENT":
 		info.Explanation = "Attempting to establish connection"
 		info.Workaround = "Check firewall or if remote host is up"
-	case "SYN_RCVD":
+	case "SYN_RECEIVED":
 		info.Explanation = "Received connection request, sending ack"
 	}
 }

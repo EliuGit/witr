@@ -5,15 +5,11 @@
 
 package main
 
-import (
-	"github.com/pranshuparmar/witr/internal/app"
-	"github.com/pranshuparmar/witr/internal/version"
-)
+import "github.com/pranshuparmar/witr/internal/app"
 
 // Override version at build time with ldflags:
 //   go build -ldflags "-X github.com/pranshuparmar/witr/internal/version.Version=v0.3.0 -X github.com/pranshuparmar/witr/internal/version.Commit=$(git rev-parse --short HEAD) -X 'github.com/pranshuparmar/witr/internal/version.BuildDate=$(date +%Y-%m-%d)'" -o witr ./cmd/witr
 
 func main() {
-	app.SetVersion(version.Version, version.Commit, version.BuildDate)
-	app.Execute()
+	app.Main()
 }

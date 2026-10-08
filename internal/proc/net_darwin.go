@@ -3,7 +3,11 @@
 package proc
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -11,14 +15,39 @@ import (
 )
 
 func ListOpenPorts() ([]model.OpenPort, error) {
-	cmd := exec.Command("lsof", "-i", "-P", "-n")
-	out, err := cmd.Output()
-	if err != nil {
+	// lsof exits 1 when it has nothing to list (e.g. a user with no sockets);
+	// its output is still valid.
+	out, err := exec.Command("lsof", "-i", "-P", "-n").Output()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
 		return nil, err
 	}
+	ports := parseLsofPorts(string(out))
 
+	// Without root, lsof only sees this user's processes; netstat sees every
+	// socket, and usually its owner too.
+	if os.Geteuid() != 0 {
+		ports = append(ports, missingPorts(NetstatSockets(), ports)...)
+	}
+	return ports, nil
+}
+
+// NetstatSockets lists every TCP and UDP socket netstat reports, with its
+// owner when netstat knows it (PID 0 otherwise). Unlike lsof, netstat sees
+// other users' sockets without root.
+func NetstatSockets() []model.OpenPort {
+	// -l prints IPv6 addresses in full; -v adds the owner.
+	out, err := exec.Command("netstat", "-anvl").Output()
+	if err != nil {
+		return nil
+	}
+	return parseNetstatSockets(string(out))
+}
+
+// parseLsofPorts parses `lsof -i -P -n` output.
+func parseLsofPorts(out string) []model.OpenPort {
 	var ports []model.OpenPort
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 
 	startIdx := 0
 	if len(lines) > 0 && strings.HasPrefix(lines[0], "COMMAND") {
@@ -48,7 +77,8 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 			}
 		}
 
-		nameField := fields[8] // Address:Port
+		// Address:Port, or local->remote for a connected socket.
+		nameField, remoteField, _ := strings.Cut(fields[8], "->")
 		state := "UNKNOWN"
 		if len(fields) > 9 {
 			state = strings.Trim(fields[9], "()")
@@ -72,17 +102,113 @@ func ListOpenPorts() ([]model.OpenPort, error) {
 		}
 
 		if port > 0 {
+			remoteAddr, remotePort := parseNetstatAddr(remoteField)
 			ports = append(ports, model.OpenPort{
-				PID:      pid,
-				Port:     port,
-				Address:  addr,
-				Protocol: protocol,
-				State:    state,
+				PID:           pid,
+				Port:          port,
+				Address:       addr,
+				Protocol:      protocol,
+				State:         state,
+				RemoteAddress: remoteAddr,
+				RemotePort:    remotePort,
 			})
 		}
 	}
 
-	return ports, nil
+	return ports
+}
+
+// missingPorts returns the netstat sockets that no lsof port accounts for,
+// once each. TIME_WAIT sockets belong to no process and are left out, as on
+// Linux.
+func missingPorts(sockets, owned []model.OpenPort) []model.OpenPort {
+	key := func(p model.OpenPort) string {
+		return fmt.Sprintf("%s|%s|%d|%s|%s|%d", p.Protocol, p.Address, p.Port, p.State, p.RemoteAddress, p.RemotePort)
+	}
+	seen := make(map[string]bool, len(owned))
+	for _, p := range owned {
+		seen[key(p)] = true
+	}
+
+	var ports []model.OpenPort
+	for _, p := range sockets {
+		if p.State == "TIME_WAIT" || seen[key(p)] {
+			continue
+		}
+		seen[key(p)] = true
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+// parseNetstatSockets parses `netstat -anvl` output: Proto Recv-Q Send-Q
+// Local Foreign, then (state) for TCP only, then the -v columns.
+func parseNetstatSockets(out string) []model.OpenPort {
+	var withBytes, procPID bool
+	var ports []model.OpenPort
+	for line := range strings.Lines(out) {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if fields[0] == "Proto" {
+			withBytes = strings.Contains(line, "rxbytes")
+			procPID = strings.Contains(line, "process:pid")
+			continue
+		}
+		if len(fields) < 5 {
+			continue
+		}
+		var p model.OpenPort
+		next := 5 // the first column after the addresses
+		switch {
+		case strings.HasPrefix(fields[0], "tcp"):
+			if len(fields) < 6 {
+				continue
+			}
+			p.Protocol, p.State = "TCP", fields[5]
+			next++
+		case strings.HasPrefix(fields[0], "udp"):
+			p.Protocol, p.State = "UDP", "OPEN"
+		default:
+			continue
+		}
+		p.Address, p.Port = parseNetstatAddr(fields[3])
+		p.RemoteAddress, p.RemotePort = parseNetstatAddr(fields[4])
+		if p.Port == 0 {
+			continue
+		}
+		p.PID = netstatOwner(fields[next:], withBytes, procPID)
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+// netstatOwner reads the owner PID from the -v columns of a netstat row. The
+// layout depends on the macOS release: the PID follows rhiwat and shiwat,
+// which newer releases precede with rxbytes and txbytes, and current releases
+// print it as process:pid, where the process name may contain spaces.
+func netstatOwner(cols []string, withBytes, procPID bool) int {
+	i := 2 // rhiwat, shiwat
+	if withBytes {
+		i += 2
+	}
+	if i >= len(cols) {
+		return 0
+	}
+	f := cols[i]
+	if procPID {
+		j := slices.IndexFunc(cols[i:], func(s string) bool { return strings.Contains(s, ":") })
+		if j < 0 {
+			return 0
+		}
+		f = cols[i+j][strings.LastIndex(cols[i+j], ":")+1:]
+	}
+	pid, err := strconv.Atoi(f)
+	if err != nil || pid < 0 {
+		return 0
+	}
+	return pid
 }
 
 // parseNetstatAddr parses addresses like "*.8080", "127.0.0.1.8080", "[::1].8080"

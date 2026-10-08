@@ -45,16 +45,18 @@ func socketsForPID(pid int) []model.Socket {
 		if p.PID != pid {
 			continue
 		}
-		key := p.Protocol + "|" + p.Address + "|" + strconv.Itoa(p.Port) + "|" + p.State
+		key := p.Protocol + "|" + p.Address + "|" + strconv.Itoa(p.Port) + "|" + p.State + "|" + p.RemoteAddress + "|" + strconv.Itoa(p.RemotePort)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 		sockets = append(sockets, model.Socket{
-			Port:     p.Port,
-			Address:  p.Address,
-			Protocol: p.Protocol,
-			State:    p.State,
+			Port:          p.Port,
+			Address:       p.Address,
+			Protocol:      p.Protocol,
+			State:         p.State,
+			RemoteAddress: p.RemoteAddress,
+			RemotePort:    p.RemotePort,
 		})
 	}
 	return sockets
